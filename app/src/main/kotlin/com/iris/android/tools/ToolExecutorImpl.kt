@@ -9,7 +9,7 @@ import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
 import android.provider.Settings
-import androidx.core.app.RemoteInput
+import android.app.RemoteInput
 import com.iris.android.agent.PermissionBroker
 import com.iris.android.agent.ToolExecutor
 import com.iris.android.data.AppDatabase
