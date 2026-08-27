@@ -88,7 +88,9 @@ class LlmClient {
                                     .put("type", "function")
                                     .put(
                                         "function",
-                                        JSONObject().put("name", tc.name).put("arguments", JSONObject(tc.input))
+                                        JSONObject()
+                                            .put("name", tc.name)
+                                            .put("arguments", JSONObject(tc.input).toString())
                                     )
                             )
                         }
