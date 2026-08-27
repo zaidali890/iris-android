@@ -41,6 +41,7 @@ fun SettingsScreen(
         SectionCard("Brain (LLM)") {
             listOf(
                 LlmProvider.GROK to "Grok (xAI)",
+                LlmProvider.GROQ to "Groq (fast, free-tier open models)",
                 LlmProvider.ANTHROPIC to "Anthropic",
                 LlmProvider.OPENAI to "OpenAI",
                 LlmProvider.OLLAMA to "Ollama (local network)"
@@ -53,10 +54,16 @@ fun SettingsScreen(
             Spacer(Modifier.height(10.dp))
             when (settings.llmProvider) {
                 LlmProvider.GROK -> {
-                    LabeledField("Grok API key", settings.grokApiKey, secret = true) {
+                    LabeledField("Grok API key (from console.x.ai)", settings.grokApiKey, secret = true) {
                         scope.launch { repo.setGrokKey(it) }
                     }
                     LabeledField("Model", settings.grokModel) { scope.launch { repo.setGrokModel(it) } }
+                }
+                LlmProvider.GROQ -> {
+                    LabeledField("Groq API key (from console.groq.com)", settings.groqApiKey, secret = true) {
+                        scope.launch { repo.setGroqKey(it) }
+                    }
+                    LabeledField("Model", settings.groqModel) { scope.launch { repo.setGroqModel(it) } }
                 }
                 LlmProvider.ANTHROPIC -> {
                     LabeledField("Anthropic API key", settings.anthropicApiKey, secret = true) {

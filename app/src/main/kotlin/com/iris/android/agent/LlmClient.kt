@@ -33,6 +33,15 @@ class LlmClient {
             tools = tools,
             providerLabel = "Grok"
         )
+        LlmProvider.GROQ -> chatOpenAiCompatible(
+            baseUrl = "https://api.groq.com/openai/v1/chat/completions",
+            apiKey = settings.groqApiKey,
+            model = settings.groqModel,
+            systemPrompt = systemPrompt,
+            history = history,
+            tools = tools,
+            providerLabel = "Groq"
+        )
         LlmProvider.OPENAI -> chatOpenAiCompatible(
             baseUrl = "https://api.openai.com/v1/chat/completions",
             apiKey = settings.openaiApiKey,

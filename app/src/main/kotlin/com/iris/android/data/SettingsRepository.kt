@@ -11,13 +11,15 @@ import kotlinx.coroutines.flow.map
 
 private val Context.dataStore by preferencesDataStore(name = "iris_settings")
 
-enum class LlmProvider { GROK, ANTHROPIC, OPENAI, OLLAMA }
+enum class LlmProvider { GROK, GROQ, ANTHROPIC, OPENAI, OLLAMA }
 enum class TtsProvider { DEVICE, FISH_AUDIO }
 
 data class IrisSettings(
     val llmProvider: LlmProvider = LlmProvider.GROK,
     val grokApiKey: String = "",
     val grokModel: String = "grok-2-latest",
+    val groqApiKey: String = "",
+    val groqModel: String = "llama-3.3-70b-versatile",
     val anthropicApiKey: String = "",
     val anthropicModel: String = "claude-sonnet-4-6",
     val openaiApiKey: String = "",
@@ -40,6 +42,8 @@ object Keys {
     val LLM_PROVIDER = stringPreferencesKey("llm_provider")
     val GROK_KEY = stringPreferencesKey("grok_key")
     val GROK_MODEL = stringPreferencesKey("grok_model")
+    val GROQ_KEY = stringPreferencesKey("groq_key")
+    val GROQ_MODEL = stringPreferencesKey("groq_model")
     val ANTHROPIC_KEY = stringPreferencesKey("anthropic_key")
     val ANTHROPIC_MODEL = stringPreferencesKey("anthropic_model")
     val OPENAI_KEY = stringPreferencesKey("openai_key")
@@ -67,6 +71,8 @@ class SettingsRepository(private val context: Context) {
                 ?: LlmProvider.GROK,
             grokApiKey = p[Keys.GROK_KEY] ?: "",
             grokModel = p[Keys.GROK_MODEL] ?: "grok-2-latest",
+            groqApiKey = p[Keys.GROQ_KEY] ?: "",
+            groqModel = p[Keys.GROQ_MODEL] ?: "llama-3.3-70b-versatile",
             anthropicApiKey = p[Keys.ANTHROPIC_KEY] ?: "",
             anthropicModel = p[Keys.ANTHROPIC_MODEL] ?: "claude-sonnet-4-6",
             openaiApiKey = p[Keys.OPENAI_KEY] ?: "",
@@ -91,6 +97,8 @@ class SettingsRepository(private val context: Context) {
     suspend fun setLlmProvider(v: LlmProvider) = context.dataStore.edit { it[Keys.LLM_PROVIDER] = v.name }
     suspend fun setGrokKey(v: String) = context.dataStore.edit { it[Keys.GROK_KEY] = v }
     suspend fun setGrokModel(v: String) = context.dataStore.edit { it[Keys.GROK_MODEL] = v }
+    suspend fun setGroqKey(v: String) = context.dataStore.edit { it[Keys.GROQ_KEY] = v }
+    suspend fun setGroqModel(v: String) = context.dataStore.edit { it[Keys.GROQ_MODEL] = v }
     suspend fun setAnthropicKey(v: String) = context.dataStore.edit { it[Keys.ANTHROPIC_KEY] = v }
     suspend fun setAnthropicModel(v: String) = context.dataStore.edit { it[Keys.ANTHROPIC_MODEL] = v }
     suspend fun setOpenAiKey(v: String) = context.dataStore.edit { it[Keys.OPENAI_KEY] = v }
