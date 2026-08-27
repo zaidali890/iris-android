@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">IRIS</string>
+    <string name="assistant_service_channel">IRIS Assistant</string>
+    <string name="assistant_service_notification_title">IRIS is listening</string>
+    <string name="assistant_service_notification_text">Tap to open • Tap mic to give a command</string>
+    <string name="accessibility_service_description">Lets IRIS carry out actions Android doesn\'t expose an API for — sending a WhatsApp message/call you asked for, or answering an incoming call. Only acts when you\'ve asked IRIS to. You can turn this off anytime in IRIS Settings.</string>
+</resources>
