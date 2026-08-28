@@ -32,6 +32,9 @@ data class IrisSettings(
     val personaName: String = "IRIS",
     val personaStyle: String = "warm, direct, a little witty — like a capable assistant who knows you well",
     val autoSpeakNotifications: Boolean = true,
+    val notifAllowedPackages: String = "com.whatsapp,com.whatsapp.w4b",
+    val wakeWordEnabled: Boolean = false,
+    val speakAgentReplies: Boolean = true,
     val autoReplyEnabled: Boolean = false,
     val autoAnswerCalls: Boolean = false,
     val accessibilityAutomationEnabled: Boolean = false,
@@ -56,6 +59,9 @@ object Keys {
     val PERSONA_NAME = stringPreferencesKey("persona_name")
     val PERSONA_STYLE = stringPreferencesKey("persona_style")
     val AUTO_SPEAK = booleanPreferencesKey("auto_speak")
+    val NOTIF_ALLOWED_PACKAGES = stringPreferencesKey("notif_allowed_packages")
+    val WAKE_WORD_ENABLED = booleanPreferencesKey("wake_word_enabled")
+    val SPEAK_AGENT_REPLIES = booleanPreferencesKey("speak_agent_replies")
     val AUTO_REPLY = booleanPreferencesKey("auto_reply")
     val AUTO_ANSWER = booleanPreferencesKey("auto_answer")
     val ACCESSIBILITY_AUTOMATION = booleanPreferencesKey("accessibility_automation")
@@ -87,6 +93,9 @@ class SettingsRepository(private val context: Context) {
             personaStyle = p[Keys.PERSONA_STYLE]
                 ?: "warm, direct, a little witty — like a capable assistant who knows you well",
             autoSpeakNotifications = p[Keys.AUTO_SPEAK] ?: true,
+            notifAllowedPackages = p[Keys.NOTIF_ALLOWED_PACKAGES] ?: "com.whatsapp,com.whatsapp.w4b",
+            wakeWordEnabled = p[Keys.WAKE_WORD_ENABLED] ?: false,
+            speakAgentReplies = p[Keys.SPEAK_AGENT_REPLIES] ?: true,
             autoReplyEnabled = p[Keys.AUTO_REPLY] ?: false,
             autoAnswerCalls = p[Keys.AUTO_ANSWER] ?: false,
             accessibilityAutomationEnabled = p[Keys.ACCESSIBILITY_AUTOMATION] ?: false,
@@ -111,6 +120,9 @@ class SettingsRepository(private val context: Context) {
     suspend fun setPersonaName(v: String) = context.dataStore.edit { it[Keys.PERSONA_NAME] = v }
     suspend fun setPersonaStyle(v: String) = context.dataStore.edit { it[Keys.PERSONA_STYLE] = v }
     suspend fun setAutoSpeak(v: Boolean) = context.dataStore.edit { it[Keys.AUTO_SPEAK] = v }
+    suspend fun setNotifAllowedPackages(v: String) = context.dataStore.edit { it[Keys.NOTIF_ALLOWED_PACKAGES] = v }
+    suspend fun setWakeWordEnabled(v: Boolean) = context.dataStore.edit { it[Keys.WAKE_WORD_ENABLED] = v }
+    suspend fun setSpeakAgentReplies(v: Boolean) = context.dataStore.edit { it[Keys.SPEAK_AGENT_REPLIES] = v }
     suspend fun setAutoReply(v: Boolean) = context.dataStore.edit { it[Keys.AUTO_REPLY] = v }
     suspend fun setAutoAnswer(v: Boolean) = context.dataStore.edit { it[Keys.AUTO_ANSWER] = v }
     suspend fun setAccessibilityAutomation(v: Boolean) =

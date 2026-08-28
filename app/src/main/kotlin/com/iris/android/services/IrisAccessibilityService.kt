@@ -52,8 +52,11 @@ class IrisAccessibilityService : AccessibilityService() {
      * with the message pre-filled), then taps the Send button. Returns true if a send button was found and tapped.
      */
     suspend fun tapWhatsAppSend(): Boolean {
-        repeat(10) {
-            val node = findClickableNode(listOf("Send"))
+        // Cold-starting WhatsApp from scratch can take a few seconds to render the chat screen,
+        // so this waits up to ~9 seconds total rather than giving up after 3 — that was the main
+        // reason auto-send was unreliable. Also tries a couple of label variants WhatsApp uses.
+        repeat(30) {
+            val node = findClickableNode(listOf("Send", "Send message"))
             if (node != null) {
                 val result = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
                 if (result) return true

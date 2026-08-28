@@ -1,6 +1,7 @@
 package com.iris.android.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -37,8 +38,10 @@ fun CommandScreen(
     messages: List<UiMessage>,
     isThinking: Boolean,
     isListening: Boolean,
+    isSpeaking: Boolean,
     onSend: (String) -> Unit,
     onMicToggle: () -> Unit,
+    onStopSpeaking: () -> Unit,
     permissionRequest: PermissionUiState?,
     onPermissionResponse: (Boolean) -> Unit
 ) {
@@ -72,6 +75,22 @@ fun CommandScreen(
                             Text("THINKING…", color = Accent, fontSize = 10.sp, modifier = Modifier.padding(vertical = 6.dp))
                         }
                     }
+                }
+            }
+
+            if (isSpeaking) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp)
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(Amber.copy(alpha = 0.12f))
+                        .clickable { onStopSpeaking() }
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("🔇 Tap to stop speaking", color = Amber, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
 

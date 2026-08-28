@@ -1,5 +1,7 @@
 package com.iris.android.ui
 
+import android.content.Intent
+import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -11,6 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -18,6 +21,7 @@ import com.iris.android.data.IrisSettings
 import com.iris.android.data.LlmProvider
 import com.iris.android.data.SettingsRepository
 import com.iris.android.data.TtsProvider
+import com.iris.android.services.IrisAccessibilityService
 import kotlinx.coroutines.launch
 
 @Composable
@@ -27,6 +31,7 @@ fun SettingsScreen(
     onOpenPermissions: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     Column(
         Modifier
@@ -99,9 +104,39 @@ fun SettingsScreen(
                 }
                 LabeledField("Voice ID", settings.fishAudioVoiceId) { scope.launch { repo.setFishVoice(it) } }
             }
-            ToggleRow("Speak notifications aloud", settings.autoSpeakNotifications) {
+            ToggleRow("Speak IRIS's replies out loud", settings.speakAgentReplies) {
+                scope.launch { repo.setSpeakAgentReplies(it) }
+            }
+            ToggleRow(
+                "\"Wake up IRIS\" — listen in background for a wake word",
+                settings.wakeWordEnabled
+            ) { scope.launch { repo.setWakeWordEnabled(it) } }
+            if (settings.wakeWordEnabled) {
+                Text(
+                    "Say \"wake up IRIS\", \"hi IRIS\", or just \"IRIS\" — it'll reply \"Yes boss\" and " +
+                        "then listen for your command. Uses more battery since the mic stays active.",
+                    color = TextMuted,
+                    fontSize = 10.sp,
+                    modifier = Modifier.padding(top = 2.dp, bottom = 4.dp)
+                )
+            }
+        }
+
+        SectionCard("Notifications") {
+            ToggleRow("Speak allowed notifications aloud", settings.autoSpeakNotifications) {
                 scope.launch { repo.setAutoSpeak(it) }
             }
+            LabeledField(
+                "Apps to read aloud (comma-separated package names)",
+                settings.notifAllowedPackages
+            ) { scope.launch { repo.setNotifAllowedPackages(it) } }
+            Text(
+                "Default is WhatsApp only, so IRIS doesn't narrate every app on your phone. " +
+                    "Package names, not app names — e.g. com.whatsapp",
+                color = TextMuted,
+                fontSize = 10.sp,
+                modifier = Modifier.padding(top = 2.dp)
+            )
         }
 
         SectionCard("Persona") {
@@ -116,10 +151,34 @@ fun SettingsScreen(
             ToggleRow("Auto-answer phone calls", settings.autoAnswerCalls) {
                 scope.launch { repo.setAutoAnswer(it) }
             }
-            ToggleRow(
-                "Enable WhatsApp send automation (Accessibility)",
-                settings.accessibilityAutomationEnabled
-            ) { scope.launch { repo.setAccessibilityAutomation(it) } }
+
+            val accessibilityOn = IrisAccessibilityService.isEnabled()
+            Row(
+                Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f).padding(end = 8.dp)) {
+                    Text("WhatsApp send automation", color = TextSecondary, fontSize = 13.sp)
+                    Text(
+                        if (accessibilityOn) "Enabled — IRIS can tap Send for you" else "Off — you'll need to tap Send yourself",
+                        color = if (accessibilityOn) Accent else TextMuted,
+                        fontSize = 10.sp
+                    )
+                }
+                if (!accessibilityOn) {
+                    Button(
+                        onClick = {
+                            context.startActivity(
+                                Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            )
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentDim)
+                    ) {
+                        Text("Enable", color = Accent, fontSize = 12.sp)
+                    }
+                }
+            }
 
             Spacer(Modifier.height(6.dp))
             Button(

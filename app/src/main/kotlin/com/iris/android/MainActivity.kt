@@ -75,6 +75,7 @@ class MainActivity : ComponentActivity() {
                 var messages by remember { mutableStateOf(listOf<UiMessage>()) }
                 var isThinking by remember { mutableStateOf(false) }
                 var isListening by remember { mutableStateOf(false) }
+                var isSpeaking by remember { mutableStateOf(false) }
                 var permissionUi by remember { mutableStateOf<PermissionUiState?>(null) }
                 val settingsState by settingsRepository.settingsFlow.collectAsState(initial = IrisSettings())
                 val scope = rememberCoroutineScope()
@@ -92,6 +93,9 @@ class MainActivity : ComponentActivity() {
                         svc.permissionRequests.collect { req ->
                             permissionUi = PermissionUiState(req.toolName, req.summary, req.detail)
                         }
+                    }
+                    launch {
+                        svc.isSpeaking.collect { isSpeaking = it }
                     }
                 }
 
@@ -128,6 +132,7 @@ class MainActivity : ComponentActivity() {
                                     messages = messages,
                                     isThinking = isThinking,
                                     isListening = isListening,
+                                    isSpeaking = isSpeaking,
                                     onSend = { text ->
                                         messages = messages + UiMessage(role = UiMessage.Role.USER, text = text)
                                         service?.sendCommand(text)
@@ -152,6 +157,7 @@ class MainActivity : ComponentActivity() {
                                             )
                                         }
                                     },
+                                    onStopSpeaking = { service?.stopSpeaking() },
                                     permissionRequest = permissionUi,
                                     onPermissionResponse = { approved ->
                                         service?.respondToPermission(approved)

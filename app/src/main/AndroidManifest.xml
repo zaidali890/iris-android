@@ -2,6 +2,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- Lets IRIS see and open other installed apps by name. Without this, Android 11+ hides
+         most apps from queryIntentActivities() by default (a privacy feature called "package
+         visibility") — only system apps like Camera stay visible, which is exactly why open_app
+         worked for Camera but reported WhatsApp/Chrome/TikTok as "not installed" even when they
+         were. Fine to declare broadly here since this is a personal sideloaded app, not something
+         going through Play Store review. -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+
     <!-- Voice -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.INTERNET" />

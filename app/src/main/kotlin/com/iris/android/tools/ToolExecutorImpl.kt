@@ -207,29 +207,42 @@ class ToolExecutorImpl(
         )
         if (!approved) return "Permission denied by user. Message was not sent."
 
-        val number = ContactResolver.resolve(context, contact)
-            ?: return "Couldn't find a phone number for \"$contact\"."
+        if (!isPackageInstalled("com.whatsapp") && !isPackageInstalled("com.whatsapp.w4b")) {
+            return "WhatsApp doesn't appear to be installed on this phone, so I can't send that."
+        }
+
+        val match = ContactResolver.resolveBest(context, contact)
+            ?: return "Couldn't find a phone number for \"$contact\" in your contacts."
 
         // WhatsApp's own documented click-to-chat URL — pre-fills the message, no automation needed for this part.
-        val url = "https://api.whatsapp.com/send?phone=$number&text=${Uri.encode(message)}"
+        val url = "https://api.whatsapp.com/send?phone=${match.number}&text=${Uri.encode(message)}"
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)
 
         if (!IrisAccessibilityService.isEnabled()) {
-            return "Opened WhatsApp with the message ready — enable the Accessibility automation permission in " +
+            return "Opened a WhatsApp chat with ${match.name} — enable the Accessibility automation permission in " +
                 "Settings if you want IRIS to tap Send automatically. For now, please tap Send yourself."
         }
 
         val sent = IrisAccessibilityService.instance?.tapWhatsAppSend() ?: false
-        return if (sent) "Message sent to $contact on WhatsApp." else
-            "Opened WhatsApp with the message ready, but couldn't confirm the Send button was tapped — please check."
+        return if (sent) "Message sent to ${match.name} on WhatsApp." else
+            "Opened a WhatsApp chat with ${match.name} and typed the message, but couldn't confirm the Send button " +
+                "was tapped — please check and tap it yourself if needed."
+    }
+
+    private fun isPackageInstalled(packageName: String): Boolean = try {
+        context.packageManager.getPackageInfo(packageName, 0)
+        true
+    } catch (e: Exception) {
+        false
     }
 
     private fun callContact(contact: String): String {
-        val number = ContactResolver.resolve(context, contact) ?: return "Couldn't find a phone number for \"$contact\"."
-        val intent = Intent(Intent.ACTION_CALL, Uri.parse("tel:$number")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val match = ContactResolver.resolveBest(context, contact)
+            ?: return "Couldn't find a phone number for \"$contact\"."
+        val intent = Intent(Intent.ACTION_CALL, Uri.parse("tel:${match.number}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)
-        return "Calling $contact."
+        return "Calling ${match.name}."
     }
 
     // -----------------------------------------------------------------
