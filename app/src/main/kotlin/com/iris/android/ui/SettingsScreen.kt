@@ -1,8 +1,12 @@
 package com.iris.android.ui
 
 import android.content.Intent
+import android.provider.ContactsContract
 import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -17,6 +21,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.iris.android.data.AllowedContactEntity
+import com.iris.android.data.AppDatabase
 import com.iris.android.data.IrisSettings
 import com.iris.android.data.LlmProvider
 import com.iris.android.data.SettingsRepository
@@ -32,6 +38,31 @@ fun SettingsScreen(
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val contactDao = remember { AppDatabase.get(context).contactDao() }
+
+    var contacts by remember { mutableStateOf(listOf<AllowedContactEntity>()) }
+    fun refreshContacts() {
+        scope.launch { contacts = contactDao.getAll() }
+    }
+    LaunchedEffect(Unit) { refreshContacts() }
+
+    val pickContactLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val uri = result.data?.data ?: return@rememberLauncherForActivityResult
+        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val nameIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+                val numberIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                val name = cursor.getString(nameIdx) ?: return@use
+                val number = cursor.getString(numberIdx) ?: return@use
+                scope.launch {
+                    contactDao.insert(AllowedContactEntity(name = name, number = number))
+                    refreshContacts()
+                }
+            }
+        }
+    }
 
     Column(
         Modifier
@@ -137,6 +168,60 @@ fun SettingsScreen(
                 fontSize = 10.sp,
                 modifier = Modifier.padding(top = 2.dp)
             )
+        }
+
+        SectionCard("Messaging Contacts") {
+            Text(
+                "IRIS can only send WhatsApp messages or place calls to contacts you add here — " +
+                    "not your whole phone book. This keeps voice/text-to-speech mistakes (wrong name, " +
+                    "similar spelling) from ever reaching the wrong person.",
+                color = TextMuted,
+                fontSize = 11.sp,
+                modifier = Modifier.padding(bottom = 10.dp)
+            )
+            contacts.forEach { c ->
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 5.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(c.name, color = TextPrimary, fontSize = 13.sp)
+                        Text(c.number, color = TextMuted, fontSize = 10.sp)
+                    }
+                    Text(
+                        "✕",
+                        color = Red,
+                        fontSize = 14.sp,
+                        modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable {
+                            scope.launch {
+                                contactDao.delete(c.id)
+                                refreshContacts()
+                            }
+                        }.padding(6.dp)
+                    )
+                }
+            }
+            if (contacts.isEmpty()) {
+                Text(
+                    "No contacts added yet.",
+                    color = TextMuted,
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(vertical = 6.dp)
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            Button(
+                onClick = {
+                    pickContactLauncher.launch(
+                        Intent(Intent.ACTION_PICK, ContactsContract.CommonDataKinds.Phone.CONTENT_URI)
+                    )
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = AccentDim),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("+ Add from Phone Contacts", color = Accent, fontSize = 13.sp)
+            }
         }
 
         SectionCard("Persona") {

@@ -1,64 +1,72 @@
 package com.iris.android.tools
 
-import android.content.Context
-import android.provider.ContactsContract
+import com.iris.android.data.AllowedContactEntity
 
 object ContactResolver {
 
-    data class Match(val name: String, val number: String)
-
-    /** Returns a phone number for the given input, resolving by contact name if it's not already one. */
-    fun resolve(context: Context, contact: String): String? = resolveBest(context, contact)?.number
+    sealed class Resolution {
+        data class Found(val name: String, val number: String) : Resolution()
+        data class Suggestions(val names: List<String>) : Resolution()
+        data object NotFound : Resolution()
+    }
 
     /**
-     * Returns the best-ranked contact match, or null if nothing matched. Ranks an exact name match
-     * above a "starts with" match above a plain "contains" match, instead of returning whichever
-     * row the database cursor happened to return first — that was the root cause of IRIS sometimes
-     * texting the wrong person when multiple contacts partially matched the spoken name.
+     * Resolves a spoken/typed contact reference against the user's curated allow-list.
+     * A bare phone number always passes through directly — that's an unambiguous instruction with
+     * no name-matching involved, so it isn't restricted to the allow-list the way name lookups are.
+     *
+     * For name lookups: tries an exact / whole-word / substring match first (fast path for the
+     * common case of getting the name basically right). Only when none of those succeed does it
+     * fall back to fuzzy (edit-distance) suggestions — asking "did you mean X or Y" is exactly what
+     * was requested, and only when a confident direct match doesn't exist.
      */
-    fun resolveBest(context: Context, contact: String): Match? {
-        val looksLikeNumber = contact.count { it.isDigit() } >= 6
-        if (looksLikeNumber) return Match(contact, contact.filter { it.isDigit() || it == '+' })
-
-        val query = contact.trim().lowercase()
-        val candidates = mutableListOf<Match>()
-
-        val cursor = context.contentResolver.query(
-            ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-            arrayOf(
-                ContactsContract.CommonDataKinds.Phone.NUMBER,
-                ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME
-            ),
-            "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?",
-            arrayOf("%$contact%"),
-            null
-        )
-        cursor?.use {
-            val numberIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
-            val nameIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
-            while (it.moveToNext()) {
-                val number = it.getString(numberIdx) ?: continue
-                val name = it.getString(nameIdx) ?: continue
-                candidates.add(Match(name, number))
-            }
+    fun resolve(contacts: List<AllowedContactEntity>, query: String): Resolution {
+        val looksLikeNumber = query.count { it.isDigit() } >= 6
+        if (looksLikeNumber) {
+            val number = query.filter { it.isDigit() || it == '+' }
+            return Resolution.Found(query, number)
         }
 
-        if (candidates.isEmpty()) return null
+        val q = query.trim().lowercase()
+        if (contacts.isEmpty()) return Resolution.NotFound
 
         fun rank(name: String): Int {
             val n = name.lowercase()
             return when {
-                n == query -> 0
-                n.startsWith(query) -> 1
-                n.split(" ").any { it == query } -> 2 // matches one whole word, e.g. "Farhan" in "Muhammad Farhan Khan"
-                else -> 3
+                n == q -> 0
+                n.split(" ").any { it == q } -> 1 // whole word, e.g. "Farhan" inside "Farhan Ali"
+                n.contains(q) -> 2
+                else -> Int.MAX_VALUE
             }
         }
 
-        // Prefer the best rank; among ties, prefer the shortest name (usually the more specific/direct match).
-        return candidates
-            .distinctBy { it.number }
-            .sortedWith(compareBy({ rank(it.name) }, { it.name.length }))
-            .firstOrNull()
+        val ranked = contacts.map { it to rank(it.name) }.filter { it.second != Int.MAX_VALUE }
+        if (ranked.isNotEmpty()) {
+            val best = ranked.sortedWith(compareBy({ it.second }, { it.first.name.length })).first().first
+            return Resolution.Found(best.name, best.number)
+        }
+
+        // No direct match at all — offer the closest few names by edit distance instead of failing outright.
+        val scored = contacts
+            .map { it to editDistance(q, it.name.lowercase()) }
+            .sortedBy { it.second }
+        val closest = scored.take(3).filter { it.second <= 4 } // cap distance so wildly unrelated names aren't suggested
+        return if (closest.isEmpty()) Resolution.NotFound else Resolution.Suggestions(closest.map { it.first.name })
+    }
+
+    private fun editDistance(a: String, b: String): Int {
+        val dp = Array(a.length + 1) { IntArray(b.length + 1) }
+        for (i in 0..a.length) dp[i][0] = i
+        for (j in 0..b.length) dp[0][j] = j
+        for (i in 1..a.length) {
+            for (j in 1..b.length) {
+                dp[i][j] = if (a[i - 1] == b[j - 1]) {
+                    dp[i - 1][j - 1]
+                } else {
+                    1 + minOf(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1])
+                }
+            }
+        }
+        return dp[a.length][b.length]
     }
 }

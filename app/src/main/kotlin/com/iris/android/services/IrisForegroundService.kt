@@ -63,7 +63,22 @@ class IrisForegroundService : Service(), PermissionBroker {
     private var wakeLoopWanted = false
     private var awaitingCommandAfterWake = false
 
-    private val wakePhrases = listOf("wake up iris", "hi iris", "hey iris", "iris")
+    private val wakeAckReplies = listOf(
+        "Yes boss, I'm listening.",
+        "Yes boss! What can I do for you?",
+        "I'm here, boss — go ahead.",
+        "Yes boss, what do you need?"
+    )
+
+    /** True if the transcribed text contains the word "iris" on its own, ignoring punctuation —
+     * catches "wake up iris", "hi iris", "hey, iris" (note the comma!), and plain "iris" alike.
+     * The old version matched exact multi-word phrases like "hey iris" as a literal substring,
+     * which silently failed the moment the recognizer inserted a comma — a very common transcription
+     * artifact for a greeting + name pattern like this. */
+    private fun containsWakeWord(heard: String): Boolean {
+        val words = heard.lowercase().replace(Regex("[^a-z ]"), " ").split(" ").filter { it.isNotBlank() }
+        return words.any { it == "iris" }
+    }
 
     data class PermissionRequestUi(val toolName: String, val summary: String, val detail: String?)
 
@@ -195,6 +210,19 @@ class IrisForegroundService : Service(), PermissionBroker {
         putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
     }
 
+    /** Wake-loop sessions use a longer silence window than manual tap-to-talk, so the recognizer
+     * doesn't consider "done speaking" so eagerly — this is the main lever available for reducing
+     * how often the background listener has to restart (and re-beep). It can't be eliminated
+     * entirely: Android's SpeechRecognizer always ends a session eventually and has to be restarted
+     * for genuinely continuous listening — that's an OS-level constraint, not something toggleable
+     * from here. A dedicated wake-word engine (e.g. Picovoice, free tier) is the real fix if
+     * completely silent always-on listening matters more than staying free of extra dependencies. */
+    private fun buildWakeLoopRecognizerIntent() = buildRecognizerIntent().apply {
+        putExtra("android.speech.extra.SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS", 4000)
+        putExtra("android.speech.extra.SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS", 4000)
+        putExtra("android.speech.extra.SPEECH_INPUT_MINIMUM_LENGTH_MILLIS", 20000)
+    }
+
     private fun simpleListener(onResult: (String) -> Unit, onError: (String) -> Unit) =
         object : RecognitionListener {
             override fun onResults(results: Bundle) {
@@ -229,11 +257,11 @@ class IrisForegroundService : Service(), PermissionBroker {
             setRecognitionListener(object : RecognitionListener {
                 override fun onResults(results: Bundle) {
                     val text = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
-                    val heard = text?.lowercase()?.trim().orEmpty()
-                    if (wakePhrases.any { heard.contains(it) }) {
+                    val heard = text.orEmpty()
+                    if (containsWakeWord(heard)) {
                         _isWakeListening.value = false
                         awaitingCommandAfterWake = true
-                        speak("Yes boss", utteranceId = UTTERANCE_WAKE_ACK)
+                        speak(wakeAckReplies.random(), utteranceId = UTTERANCE_WAKE_ACK)
                     } else {
                         restartWakeLoopSoon()
                     }
@@ -250,7 +278,7 @@ class IrisForegroundService : Service(), PermissionBroker {
                 override fun onEvent(eventType: Int, params: Bundle?) {}
             })
         }
-        speechRecognizer?.startListening(buildRecognizerIntent())
+        speechRecognizer?.startListening(buildWakeLoopRecognizerIntent())
     }
 
     fun stopWakeWordLoop() {

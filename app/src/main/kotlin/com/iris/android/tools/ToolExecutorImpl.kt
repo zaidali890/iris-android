@@ -14,8 +14,10 @@ import com.iris.android.agent.PermissionBroker
 import com.iris.android.agent.ToolExecutor
 import com.iris.android.data.AppDatabase
 import com.iris.android.data.MemoryEntity
+import com.iris.android.data.SettingsRepository
 import com.iris.android.services.IrisAccessibilityService
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -27,7 +29,9 @@ class ToolExecutorImpl(
 ) : ToolExecutor {
 
     private val memoryDao by lazy { AppDatabase.get(context).memoryDao() }
+    private val contactDao by lazy { AppDatabase.get(context).contactDao() }
     private val notificationDao by lazy { AppDatabase.get(context).notificationDao() }
+    private val settingsRepository by lazy { SettingsRepository(context) }
 
     override suspend fun execute(name: String, args: Map<String, Any?>): String {
         return when (name) {
@@ -202,17 +206,26 @@ class ToolExecutorImpl(
 
     // -----------------------------------------------------------------
     private suspend fun sendWhatsAppMessage(contact: String, message: String): String {
-        val approved = permissionBroker.requestApproval(
-            "send_whatsapp_message", "Send a WhatsApp message to $contact", message
-        )
-        if (!approved) return "Permission denied by user. Message was not sent."
+        if (settingsRepository.settingsFlow.first().requireConfirmForDestructive) {
+            val approved = permissionBroker.requestApproval(
+                "send_whatsapp_message", "Send a WhatsApp message to $contact", message
+            )
+            if (!approved) return "Permission denied by user. Message was not sent."
+        }
 
         if (!isPackageInstalled("com.whatsapp") && !isPackageInstalled("com.whatsapp.w4b")) {
             return "WhatsApp doesn't appear to be installed on this phone, so I can't send that."
         }
 
-        val match = ContactResolver.resolveBest(context, contact)
-            ?: return "Couldn't find a phone number for \"$contact\" in your contacts."
+        val resolution = ContactResolver.resolve(contactDao.getAll(), contact)
+        val match = when (resolution) {
+            is ContactResolver.Resolution.Found -> resolution
+            is ContactResolver.Resolution.Suggestions -> return "I couldn't find an exact match for " +
+                "\"$contact\" in your saved contacts. Did you mean: ${resolution.names.joinToString(", ")}? " +
+                "Tell me which one, or add the right contact in Settings → Messaging Contacts."
+            ContactResolver.Resolution.NotFound -> return "\"$contact\" isn't in your saved messaging " +
+                "contacts. Add them in Settings → Messaging Contacts first, or give me their number directly."
+        }
 
         // WhatsApp's own documented click-to-chat URL — pre-fills the message, no automation needed for this part.
         val url = "https://api.whatsapp.com/send?phone=${match.number}&text=${Uri.encode(message)}"
@@ -237,9 +250,15 @@ class ToolExecutorImpl(
         false
     }
 
-    private fun callContact(contact: String): String {
-        val match = ContactResolver.resolveBest(context, contact)
-            ?: return "Couldn't find a phone number for \"$contact\"."
+    private suspend fun callContact(contact: String): String {
+        val resolution = ContactResolver.resolve(contactDao.getAll(), contact)
+        val match = when (resolution) {
+            is ContactResolver.Resolution.Found -> resolution
+            is ContactResolver.Resolution.Suggestions -> return "I couldn't find an exact match for " +
+                "\"$contact\". Did you mean: ${resolution.names.joinToString(", ")}?"
+            ContactResolver.Resolution.NotFound -> return "\"$contact\" isn't in your saved contacts. " +
+                "Add them in Settings → Messaging Contacts first, or give me their number directly."
+        }
         val intent = Intent(Intent.ACTION_CALL, Uri.parse("tel:${match.number}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)
         return "Calling ${match.name}."
