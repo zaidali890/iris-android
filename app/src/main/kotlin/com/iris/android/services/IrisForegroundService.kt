@@ -242,14 +242,9 @@ class IrisForegroundService : Service(), PermissionBroker {
      * can cause empty/garbled results on devices without full Google Play Services (no Chrome/Google
      * app on this build strongly suggests that's the case here) — so this uses the plain, standard
      * intent instead. It'll cycle a bit more often, but should actually detect the wake word again. */
-    /** Hints the recognizer to prefer on-device recognition if the device supports it. Costs
-     * nothing to add if unsupported (silently ignored) — but if network really is the bottleneck
-     * (this device has shown DNS/connectivity issues elsewhere in testing), this could matter a lot
-     * for the background wake loop specifically, which needs to work continuously regardless of
-     * connection quality. */
-    private fun buildWakeLoopRecognizerIntent() = buildRecognizerIntent().apply {
-        putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-    }
+    // Reverted the "prefer offline" hint — untested and risky on devices that don't actually
+    // support on-device recognition; safer to use the plain, standard intent here.
+    private fun buildWakeLoopRecognizerIntent() = buildRecognizerIntent()
 
     private fun simpleListener(onResult: (String) -> Unit, onError: (String) -> Unit) =
         object : RecognitionListener {
