@@ -2,7 +2,6 @@ package com.iris.android.services
 
 import android.app.Service
 import android.content.Intent
-import android.media.AudioManager
 import android.os.Binder
 import android.os.Build
 import android.os.Bundle
@@ -274,12 +273,10 @@ class IrisForegroundService : Service(), PermissionBroker {
         if (!SpeechRecognizer.isRecognitionAvailable(this)) return
 
         _isWakeListening.value = true
-        muteRecognizerBeep()
         speechRecognizer?.destroy()
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
             setRecognitionListener(object : RecognitionListener {
                 override fun onResults(results: Bundle) {
-                    unmuteRecognizerBeep()
                     val text = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
                     val heard = text.orEmpty()
                     if (containsWakeWord(heard)) {
@@ -296,7 +293,6 @@ class IrisForegroundService : Service(), PermissionBroker {
                     }
                 }
                 override fun onError(error: Int) {
-                    unmuteRecognizerBeep()
                     restartWakeLoopSoon()
                 }
                 override fun onReadyForSpeech(params: Bundle?) {}
@@ -315,36 +311,8 @@ class IrisForegroundService : Service(), PermissionBroker {
         wakeLoopWanted = false
         awaitingCommandAfterWake = false
         _isWakeListening.value = false
-        unmuteRecognizerBeep() // safety net in case a mute was left active mid-cycle
         speechRecognizer?.destroy()
         speechRecognizer = null
-    }
-
-    /** Best-effort: mutes the stream that plays Android's recognizer start/stop tone right before
-     * opening the mic for a wake-loop cycle, then unmutes once results/error come back. This works
-     * on many phones since the system speech service plays that tone through a normal audio stream
-     * — but some manufacturer skins route it differently (or use a non-audio haptic click instead),
-     * in which case this quietly does nothing and the beep will still be audible. Only applied to
-     * the background wake loop, not the manual mic-tap-to-talk, where a beep on a deliberate action
-     * is normal and expected. */
-    private fun muteRecognizerBeep() {
-        try {
-            val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
-            audioManager.adjustStreamVolume(AudioManager.STREAM_NOTIFICATION, AudioManager.ADJUST_MUTE, 0)
-            audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_MUTE, 0)
-        } catch (e: Exception) {
-            // Some OEMs restrict muting other streams — safe to ignore, beep just won't be suppressed
-        }
-    }
-
-    private fun unmuteRecognizerBeep() {
-        try {
-            val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
-            audioManager.adjustStreamVolume(AudioManager.STREAM_NOTIFICATION, AudioManager.ADJUST_UNMUTE, 0)
-            audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_UNMUTE, 0)
-        } catch (e: Exception) {
-            // ignore
-        }
     }
 
     private fun restartWakeLoopSoon() {
@@ -444,7 +412,6 @@ class IrisForegroundService : Service(), PermissionBroker {
     }
 
     override fun onDestroy() {
-        unmuteRecognizerBeep()
         speechRecognizer?.destroy()
         tts?.shutdown()
         super.onDestroy()
