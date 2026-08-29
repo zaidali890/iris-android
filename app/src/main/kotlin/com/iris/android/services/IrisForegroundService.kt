@@ -105,7 +105,17 @@ class IrisForegroundService : Service(), PermissionBroker {
         }
 
         tts = TextToSpeech(this) { status ->
-            if (status == TextToSpeech.SUCCESS) tts?.language = Locale.getDefault()
+            if (status == TextToSpeech.SUCCESS) {
+                tts?.language = Locale.getDefault()
+            } else {
+                events.tryEmit(
+                    AgentEvent.Error(
+                        "The device's text-to-speech engine failed to start (status $status) — IRIS will " +
+                            "still work by text, but won't be able to speak replies out loud. Check " +
+                            "Settings → System → Languages & input → Text-to-speech on your phone."
+                    )
+                )
+            }
         }
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {
@@ -217,11 +227,12 @@ class IrisForegroundService : Service(), PermissionBroker {
      * for genuinely continuous listening — that's an OS-level constraint, not something toggleable
      * from here. A dedicated wake-word engine (e.g. Picovoice, free tier) is the real fix if
      * completely silent always-on listening matters more than staying free of extra dependencies. */
-    private fun buildWakeLoopRecognizerIntent() = buildRecognizerIntent().apply {
-        putExtra("android.speech.extra.SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS", 4000)
-        putExtra("android.speech.extra.SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS", 4000)
-        putExtra("android.speech.extra.SPEECH_INPUT_MINIMUM_LENGTH_MILLIS", 20000)
-    }
+    /** Reliability over reduced-cycling: those non-standard "listen longer" extras are unofficial
+     * Google-internal hints that many non-Google speech engines simply ignore or mishandle, which
+     * can cause empty/garbled results on devices without full Google Play Services (no Chrome/Google
+     * app on this build strongly suggests that's the case here) — so this uses the plain, standard
+     * intent instead. It'll cycle a bit more often, but should actually detect the wake word again. */
+    private fun buildWakeLoopRecognizerIntent() = buildRecognizerIntent()
 
     private fun simpleListener(onResult: (String) -> Unit, onError: (String) -> Unit) =
         object : RecognitionListener {
@@ -261,7 +272,12 @@ class IrisForegroundService : Service(), PermissionBroker {
                     if (containsWakeWord(heard)) {
                         _isWakeListening.value = false
                         awaitingCommandAfterWake = true
-                        speak(wakeAckReplies.random(), utteranceId = UTTERANCE_WAKE_ACK)
+                        val ack = wakeAckReplies.random()
+                        // Shown in the Command tab regardless of whether TTS audio actually plays —
+                        // lets you tell "wake word wasn't detected" apart from "detected fine, but
+                        // the speaker/TTS engine didn't say it out loud" if something's still off.
+                        events.tryEmit(AgentEvent.Final(ack))
+                        speak(ack, utteranceId = UTTERANCE_WAKE_ACK)
                     } else {
                         restartWakeLoopSoon()
                     }
