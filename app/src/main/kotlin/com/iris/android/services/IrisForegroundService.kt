@@ -242,7 +242,14 @@ class IrisForegroundService : Service(), PermissionBroker {
      * can cause empty/garbled results on devices without full Google Play Services (no Chrome/Google
      * app on this build strongly suggests that's the case here) — so this uses the plain, standard
      * intent instead. It'll cycle a bit more often, but should actually detect the wake word again. */
-    private fun buildWakeLoopRecognizerIntent() = buildRecognizerIntent()
+    /** Hints the recognizer to prefer on-device recognition if the device supports it. Costs
+     * nothing to add if unsupported (silently ignored) — but if network really is the bottleneck
+     * (this device has shown DNS/connectivity issues elsewhere in testing), this could matter a lot
+     * for the background wake loop specifically, which needs to work continuously regardless of
+     * connection quality. */
+    private fun buildWakeLoopRecognizerIntent() = buildRecognizerIntent().apply {
+        putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+    }
 
     private fun simpleListener(onResult: (String) -> Unit, onError: (String) -> Unit) =
         object : RecognitionListener {
@@ -293,6 +300,7 @@ class IrisForegroundService : Service(), PermissionBroker {
                     }
                 }
                 override fun onError(error: Int) {
+                    reportWakeLoopError(error)
                     restartWakeLoopSoon()
                 }
                 override fun onReadyForSpeech(params: Bundle?) {}
@@ -313,6 +321,31 @@ class IrisForegroundService : Service(), PermissionBroker {
         _isWakeListening.value = false
         speechRecognizer?.destroy()
         speechRecognizer = null
+    }
+
+    /** Surfaces the SpeechRecognizer error code into the Command tab, rate-limited so a tight
+     * error loop doesn't flood the chat — this is diagnostic: it tells us WHY the wake loop keeps
+     * failing (no network, permission issue, recognizer busy, etc.) instead of restarting blind. */
+    private var lastErrorReportAt = 0L
+    private fun reportWakeLoopError(code: Int) {
+        // These two fire constantly during normal operation (any cycle where nothing was said) —
+        // showing them would drown out the genuinely useful signals below, so stay quiet for those.
+        if (code == SpeechRecognizer.ERROR_NO_MATCH || code == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) return
+
+        val now = System.currentTimeMillis()
+        if (now - lastErrorReportAt < 4000) return
+        lastErrorReportAt = now
+        val name = when (code) {
+            SpeechRecognizer.ERROR_NETWORK -> "ERROR_NETWORK — no internet connection reaching the speech service"
+            SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "ERROR_NETWORK_TIMEOUT — internet too slow/unreachable"
+            SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "ERROR_RECOGNIZER_BUSY — recognizer service still busy from the last session"
+            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "ERROR_INSUFFICIENT_PERMISSIONS — microphone permission issue"
+            SpeechRecognizer.ERROR_SERVER -> "ERROR_SERVER — the speech recognition service itself returned an error"
+            SpeechRecognizer.ERROR_CLIENT -> "ERROR_CLIENT — client-side error, often a rapid restart collision"
+            SpeechRecognizer.ERROR_AUDIO -> "ERROR_AUDIO — problem reading from the microphone"
+            else -> "error code $code"
+        }
+        events.tryEmit(AgentEvent.Error("Wake-word listening hit: $name"))
     }
 
     private fun restartWakeLoopSoon() {
