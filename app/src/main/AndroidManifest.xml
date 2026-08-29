@@ -43,6 +43,10 @@
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
 
+    <!-- Lets IRIS ask to be exempted from battery optimization, which is the main reason
+         background wake-word listening dies when the app isn't in the foreground -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
     <!-- Contacts (resolve a name to a phone number for calls/WhatsApp) -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
 

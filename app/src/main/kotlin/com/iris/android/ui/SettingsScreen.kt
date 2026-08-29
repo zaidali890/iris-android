@@ -28,6 +28,7 @@ import com.iris.android.data.LlmProvider
 import com.iris.android.data.SettingsRepository
 import com.iris.android.data.TtsProvider
 import com.iris.android.services.IrisAccessibilityService
+import com.iris.android.tools.OemBackgroundSettings
 import kotlinx.coroutines.launch
 
 @Composable
@@ -263,6 +264,38 @@ fun SettingsScreen(
                         Text("Enable", color = Accent, fontSize = 12.sp)
                     }
                 }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "Wake word dying in the background?",
+                color = Amber,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                "Your phone (${OemBackgroundSettings.manufacturerHint()}) likely has its own battery " +
+                    "manager beyond Android's standard one — grant \"Ignore battery optimization\" above " +
+                    "(Review system permissions), then also try this:",
+                color = TextMuted,
+                fontSize = 10.sp,
+                modifier = Modifier.padding(top = 2.dp, bottom = 8.dp)
+            )
+            Button(
+                onClick = {
+                    val opened = OemBackgroundSettings.tryOpen(context)
+                    if (!opened) {
+                        android.widget.Toast.makeText(
+                            context,
+                            "Couldn't find a known autostart manager for this device — check your phone's own Settings app for \"Autostart\" or \"Battery > App battery saver\" manually.",
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Panel),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Try opening autostart/background settings", color = Accent, fontSize = 12.sp)
             }
 
             Spacer(Modifier.height(6.dp))

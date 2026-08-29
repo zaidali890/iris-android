@@ -5,6 +5,8 @@ import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.media.projection.MediaProjectionManager
+import android.net.Uri
+import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -115,6 +117,19 @@ fun PermissionsScreen(onDone: () -> Unit) {
                 {
                     val manager = context.getSystemService(MediaProjectionManager::class.java)
                     screenshotLauncher.launch(manager.createScreenCaptureIntent())
+                }
+            ),
+            PermRow(
+                "Ignore battery optimization",
+                "Strongly recommended if you use \"wake up IRIS\" — without this, Android will likely " +
+                    "kill background listening a few minutes after you leave the app.",
+                { c -> (c.getSystemService(Context.POWER_SERVICE) as PowerManager).isIgnoringBatteryOptimizations(c.packageName) },
+                {
+                    context.startActivity(
+                        Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                            data = Uri.parse("package:${context.packageName}")
+                        }
+                    )
                 }
             )
         )
