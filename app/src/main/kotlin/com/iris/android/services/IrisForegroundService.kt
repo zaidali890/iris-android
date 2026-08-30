@@ -26,6 +26,7 @@ import com.iris.android.data.AppDatabase
 import com.iris.android.data.IrisSettings
 import com.iris.android.data.SettingsRepository
 import com.iris.android.tools.ToolExecutorImpl
+import com.iris.android.voice.VoskWakeWordEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -58,8 +59,10 @@ class IrisForegroundService : Service(), PermissionBroker {
     private var tts: TextToSpeech? = null
     private var speechRecognizer: SpeechRecognizer? = null
 
-    // Wake-word loop state — guards against overlapping listen sessions and lets us tell a
-    // "no match, just restart the loop" result apart from "user gave a real one-shot command".
+    // Vosk runs independently of Android's SpeechRecognizer — genuinely continuous, offline,
+    // no restart cycling or beeping. It's paused only while the single-shot command capture (which
+    // still uses SpeechRecognizer, since that part was always working fine) needs the mic instead.
+    private var wakeWordEngine: VoskWakeWordEngine? = null
     private var wakeLoopWanted = false
     private var awaitingCommandAfterWake = false
 
@@ -69,16 +72,6 @@ class IrisForegroundService : Service(), PermissionBroker {
         "I'm here, boss — go ahead.",
         "Yes boss, what do you need?"
     )
-
-    /** True if the transcribed text contains the word "iris" on its own, ignoring punctuation —
-     * catches "wake up iris", "hi iris", "hey, iris" (note the comma!), and plain "iris" alike.
-     * The old version matched exact multi-word phrases like "hey iris" as a literal substring,
-     * which silently failed the moment the recognizer inserted a comma — a very common transcription
-     * artifact for a greeting + name pattern like this. */
-    private fun containsWakeWord(heard: String): Boolean {
-        val words = heard.lowercase().replace(Regex("[^a-z ]"), " ").split(" ").filter { it.isNotBlank() }
-        return words.any { it == "iris" }
-    }
 
     data class PermissionRequestUi(val toolName: String, val summary: String, val detail: String?)
 
@@ -93,6 +86,12 @@ class IrisForegroundService : Service(), PermissionBroker {
         settingsRepository = SettingsRepository(applicationContext)
         val toolExecutor = ToolExecutorImpl(applicationContext, this)
         agentLoop = AgentLoop(LlmClient(), toolExecutor, AppDatabase.get(applicationContext).memoryDao())
+
+        wakeWordEngine = VoskWakeWordEngine(
+            context = applicationContext,
+            onWakeWordDetected = { onWakeWordDetected() },
+            onError = { message -> events.tryEmit(AgentEvent.Error("Wake word engine: $message")) }
+        )
 
         scope.launch {
             settingsRepository.settingsFlow.collect { new ->
@@ -230,22 +229,6 @@ class IrisForegroundService : Service(), PermissionBroker {
         putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
     }
 
-    /** Wake-loop sessions use a longer silence window than manual tap-to-talk, so the recognizer
-     * doesn't consider "done speaking" so eagerly — this is the main lever available for reducing
-     * how often the background listener has to restart (and re-beep). It can't be eliminated
-     * entirely: Android's SpeechRecognizer always ends a session eventually and has to be restarted
-     * for genuinely continuous listening — that's an OS-level constraint, not something toggleable
-     * from here. A dedicated wake-word engine (e.g. Picovoice, free tier) is the real fix if
-     * completely silent always-on listening matters more than staying free of extra dependencies. */
-    /** Reliability over reduced-cycling: those non-standard "listen longer" extras are unofficial
-     * Google-internal hints that many non-Google speech engines simply ignore or mishandle, which
-     * can cause empty/garbled results on devices without full Google Play Services (no Chrome/Google
-     * app on this build strongly suggests that's the case here) — so this uses the plain, standard
-     * intent instead. It'll cycle a bit more often, but should actually detect the wake word again. */
-    // Reverted the "prefer offline" hint — untested and risky on devices that don't actually
-    // support on-device recognition; safer to use the plain, standard intent here.
-    private fun buildWakeLoopRecognizerIntent() = buildRecognizerIntent()
-
     private fun simpleListener(onResult: (String) -> Unit, onError: (String) -> Unit) =
         object : RecognitionListener {
             override fun onResults(results: Bundle) {
@@ -266,90 +249,35 @@ class IrisForegroundService : Service(), PermissionBroker {
         }
 
     // -----------------------------------------------------------------
-    // Voice — background wake-word loop ("wake up iris" / "hi iris" / "iris")
+    // Voice — background wake-word detection (Vosk, offline, no account needed)
     // -----------------------------------------------------------------
     fun startWakeWordLoop() {
         if (!currentSettings.wakeWordEnabled) return
         wakeLoopWanted = true
-        if (_isWakeListening.value || awaitingCommandAfterWake) return
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) return
-
-        _isWakeListening.value = true
-        speechRecognizer?.destroy()
-        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
-            setRecognitionListener(object : RecognitionListener {
-                override fun onResults(results: Bundle) {
-                    val text = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
-                    val heard = text.orEmpty()
-                    if (containsWakeWord(heard)) {
-                        _isWakeListening.value = false
-                        awaitingCommandAfterWake = true
-                        val ack = wakeAckReplies.random()
-                        // Shown in the Command tab regardless of whether TTS audio actually plays —
-                        // lets you tell "wake word wasn't detected" apart from "detected fine, but
-                        // the speaker/TTS engine didn't say it out loud" if something's still off.
-                        events.tryEmit(AgentEvent.Final(ack))
-                        speak(ack, utteranceId = UTTERANCE_WAKE_ACK)
-                    } else {
-                        restartWakeLoopSoon()
-                    }
-                }
-                override fun onError(error: Int) {
-                    reportWakeLoopError(error)
-                    restartWakeLoopSoon()
-                }
-                override fun onReadyForSpeech(params: Bundle?) {}
-                override fun onBeginningOfSpeech() {}
-                override fun onRmsChanged(rmsdB: Float) {}
-                override fun onBufferReceived(buffer: ByteArray?) {}
-                override fun onEndOfSpeech() {}
-                override fun onPartialResults(partialResults: Bundle?) {}
-                override fun onEvent(eventType: Int, params: Bundle?) {}
-            })
-        }
-        speechRecognizer?.startListening(buildWakeLoopRecognizerIntent())
+        if (awaitingCommandAfterWake) return // command capture is using the mic right now
+        wakeWordEngine?.start(currentSettings.wakeWord)
+        _isWakeListening.value = wakeWordEngine?.isRunning() ?: false
     }
 
     fun stopWakeWordLoop() {
         wakeLoopWanted = false
         awaitingCommandAfterWake = false
         _isWakeListening.value = false
-        speechRecognizer?.destroy()
-        speechRecognizer = null
+        wakeWordEngine?.stop()
     }
 
-    /** Surfaces the SpeechRecognizer error code into the Command tab, rate-limited so a tight
-     * error loop doesn't flood the chat — this is diagnostic: it tells us WHY the wake loop keeps
-     * failing (no network, permission issue, recognizer busy, etc.) instead of restarting blind. */
-    private var lastErrorReportAt = 0L
-    private fun reportWakeLoopError(code: Int) {
-        // These two fire constantly during normal operation (any cycle where nothing was said) —
-        // showing them would drown out the genuinely useful signals below, so stay quiet for those.
-        if (code == SpeechRecognizer.ERROR_NO_MATCH || code == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) return
-
-        val now = System.currentTimeMillis()
-        if (now - lastErrorReportAt < 4000) return
-        lastErrorReportAt = now
-        val name = when (code) {
-            SpeechRecognizer.ERROR_NETWORK -> "ERROR_NETWORK — no internet connection reaching the speech service"
-            SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "ERROR_NETWORK_TIMEOUT — internet too slow/unreachable"
-            SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "ERROR_RECOGNIZER_BUSY — recognizer service still busy from the last session"
-            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "ERROR_INSUFFICIENT_PERMISSIONS — microphone permission issue"
-            SpeechRecognizer.ERROR_SERVER -> "ERROR_SERVER — the speech recognition service itself returned an error"
-            SpeechRecognizer.ERROR_CLIENT -> "ERROR_CLIENT — client-side error, often a rapid restart collision"
-            SpeechRecognizer.ERROR_AUDIO -> "ERROR_AUDIO — problem reading from the microphone"
-            else -> "error code $code"
-        }
-        events.tryEmit(AgentEvent.Error("Wake-word listening hit: $name"))
-    }
-
-    private fun restartWakeLoopSoon() {
+    private fun onWakeWordDetected() {
+        // Vosk and the command-capture SpeechRecognizer can't use the mic at the same time —
+        // pause wake detection while we listen for the actual command.
+        wakeWordEngine?.stop()
         _isWakeListening.value = false
-        if (!wakeLoopWanted) return
-        scope.launch {
-            delay(400) // short breather so back-to-back recognizer errors don't spin tightly
-            startWakeWordLoop()
-        }
+        awaitingCommandAfterWake = true
+        val ack = wakeAckReplies.random()
+        // Shown in the Command tab regardless of whether TTS audio actually plays — lets you tell
+        // "wake word wasn't detected" apart from "detected fine, but the speaker/TTS engine didn't
+        // say it out loud" if something's still off.
+        events.tryEmit(AgentEvent.Final(ack))
+        speak(ack, utteranceId = UTTERANCE_WAKE_ACK)
     }
 
     private fun startCommandListenAfterWake() {
@@ -440,6 +368,7 @@ class IrisForegroundService : Service(), PermissionBroker {
     }
 
     override fun onDestroy() {
+        wakeWordEngine?.stop()
         speechRecognizer?.destroy()
         tts?.shutdown()
         super.onDestroy()

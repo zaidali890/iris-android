@@ -29,6 +29,7 @@ import com.iris.android.data.SettingsRepository
 import com.iris.android.data.TtsProvider
 import com.iris.android.services.IrisAccessibilityService
 import com.iris.android.tools.OemBackgroundSettings
+import com.iris.android.voice.VoskModelManager
 import kotlinx.coroutines.launch
 
 @Composable
@@ -140,17 +141,56 @@ fun SettingsScreen(
                 scope.launch { repo.setSpeakAgentReplies(it) }
             }
             ToggleRow(
-                "\"Wake up IRIS\" — listen in background for a wake word",
+                "\"Wake up IRIS\" — genuinely continuous background listening",
                 settings.wakeWordEnabled
             ) { scope.launch { repo.setWakeWordEnabled(it) } }
             if (settings.wakeWordEnabled) {
                 Text(
-                    "Say \"wake up IRIS\", \"hi IRIS\", or just \"IRIS\" — it'll reply \"Yes boss\" and " +
-                        "then listen for your command. Uses more battery since the mic stays active.",
+                    "Uses Vosk — a free, open-source offline speech engine, not Android's built-in " +
+                        "recognizer, so it doesn't need network and won't beep/restart every few " +
+                        "seconds. Needs a one-time ~40MB model download below (internet required " +
+                        "just for that download, fully offline afterward).",
                     color = TextMuted,
                     fontSize = 10.sp,
-                    modifier = Modifier.padding(top = 2.dp, bottom = 4.dp)
+                    modifier = Modifier.padding(top = 2.dp, bottom = 8.dp)
                 )
+
+                val modelReady = remember { mutableStateOf(VoskModelManager.isModelReady(context)) }
+                var downloadProgress by remember { mutableIntStateOf(-1) }
+
+                if (modelReady.value) {
+                    Text("✓ Offline model ready", color = Accent, fontSize = 11.sp, modifier = Modifier.padding(bottom = 8.dp))
+                } else if (downloadProgress in 0..99) {
+                    Text("Downloading model… $downloadProgress%", color = TextSecondary, fontSize = 11.sp, modifier = Modifier.padding(bottom = 8.dp))
+                } else {
+                    Button(
+                        onClick = {
+                            downloadProgress = 0
+                            scope.launch {
+                                val result = VoskModelManager.download(context) { p -> downloadProgress = p }
+                                if (result.isSuccess) {
+                                    modelReady.value = true
+                                } else {
+                                    downloadProgress = -1
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        "Download failed: ${result.exceptionOrNull()?.message}",
+                                        android.widget.Toast.LENGTH_LONG
+                                    ).show()
+                                }
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentDim),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Download offline wake-word model (~40MB)", color = Accent, fontSize = 12.sp)
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+                LabeledField("Wake word to listen for", settings.wakeWord) {
+                    scope.launch { repo.setWakeWord(it) }
+                }
             }
         }
 

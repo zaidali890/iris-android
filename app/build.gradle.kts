@@ -37,6 +37,9 @@ android {
     }
     packaging {
         resources.excludes.add("META-INF/*")
+        // Vosk + JNA both ship native libraries that can collide during packaging — pickFirst
+        // avoids a build failure over duplicate .so files.
+        jniLibs.pickFirsts.add("**/*.so")
     }
 }
 
@@ -69,6 +72,12 @@ dependencies {
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+
+    // Wake-word engine (Vosk) — open-source, offline, no account/API key needed at all.
+    // If Gradle can't resolve this exact version, check alphacephei.com/vosk/android for the
+    // current release and bump the version number here.
+    implementation("com.alphacephei:vosk-android:0.3.47")
+    implementation("net.java.dev.jna:jna:5.13.0@aar")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

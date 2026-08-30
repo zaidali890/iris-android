@@ -103,3 +103,31 @@ app/src/main/kotlin/com/iris/android/
   current API docs, since endpoints for TTS providers change often.
 - `SCHEDULE_EXACT_ALARM`/`USE_EXACT_ALARM` may prompt Android 12+ users for one more manual grant
   the first time a reminder is set; the code falls back to an inexact alarm if it's denied.
+
+## 8. Wake word setup (Vosk — free, offline, no signup)
+
+Earlier builds tried to fake continuous listening by repeatedly restarting Android's speech
+recognizer — that approach turned out to be unreliable (needs network on most devices, beeps every
+cycle, gets killed in the background by aggressive phone manufacturers). A dedicated engine
+(Picovoice Porcupine) was tried next, but their signup now requires a company email, which blocked
+that path entirely. This version uses **Vosk** instead — open-source, offline, genuinely
+always-on, and requires no account or API key at all.
+
+**One-time setup:**
+1. In IRIS: Settings → Voice → turn on "Wake up IRIS"
+2. Tap **"Download offline wake-word model (~40MB)"** — needs internet just for this one download
+3. Once it shows "✓ Offline model ready," it works fully offline from then on
+4. The "Wake word to listen for" field defaults to `iris` — change it if you want a different word
+
+**Why this should actually work where the earlier approaches didn't:** Vosk doesn't use Android's
+`SpeechRecognizer` at all — it runs its own continuous audio pipeline with a vocabulary constrained
+to just your wake word (plus a catch-all for everything else), which is a genuinely supported mode
+for always-on listening, unlike repeatedly restarting a system designed for one-shot dictation. The
+moment it detects the wake word, it hands off to the same single-shot command-capture flow that was
+already working correctly.
+
+**Honest caveat:** I implemented this from my training knowledge of the Vosk Android SDK, without
+being able to compile or test it myself (no Android SDK/network in the environment I built this
+in). The Gradle dependency version, the model URL, or a method signature may need a small
+adjustment — if the build fails or the download doesn't work, paste me the exact error and I'll
+fix it fast; that's a much quicker loop than guessing blind.
