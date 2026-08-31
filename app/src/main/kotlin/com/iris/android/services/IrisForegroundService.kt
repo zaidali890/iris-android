@@ -2,6 +2,7 @@ package com.iris.android.services
 
 import android.app.Service
 import android.content.Intent
+import android.media.MediaPlayer
 import android.os.Binder
 import android.os.Build
 import android.os.Bundle
@@ -25,6 +26,7 @@ import com.iris.android.agent.PermissionBroker
 import com.iris.android.data.AppDatabase
 import com.iris.android.data.IrisSettings
 import com.iris.android.data.SettingsRepository
+import com.iris.android.data.TtsProvider
 import com.iris.android.tools.ToolExecutorImpl
 import com.iris.android.voice.VoskWakeWordEngine
 import kotlinx.coroutines.CoroutineScope
@@ -36,12 +38,24 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
+import java.io.File
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 class IrisForegroundService : Service(), PermissionBroker {
 
     private val binder = LocalBinder()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val http = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .build()
 
     val events = MutableSharedFlow<AgentEvent>(extraBufferCapacity = 32)
     val permissionRequests = MutableSharedFlow<PermissionRequestUi>(extraBufferCapacity = 8)
@@ -58,6 +72,7 @@ class IrisForegroundService : Service(), PermissionBroker {
     private lateinit var agentLoop: AgentLoop
     private var tts: TextToSpeech? = null
     private var speechRecognizer: SpeechRecognizer? = null
+    private var mediaPlayer: MediaPlayer? = null
 
     // Vosk runs independently of Android's SpeechRecognizer — genuinely continuous, offline,
     // no restart cycling or beeping. It's paused only while the single-shot command capture (which
@@ -122,21 +137,12 @@ class IrisForegroundService : Service(), PermissionBroker {
             }
             override fun onDone(utteranceId: String?) {
                 _isSpeaking.value = false
-                if (utteranceId == UTTERANCE_WAKE_ACK) {
-                    // TTS callbacks fire on an internal TTS thread, not the main thread — but
-                    // SpeechRecognizer must be created/started on the main thread, so this was
-                    // silently failing before. scope.launch (Dispatchers.Main) fixes that, and the
-                    // short delay gives the audio system a moment to release the speaker before the
-                    // mic tries to grab it, avoiding a race where the recognizer starts too early.
-                    scope.launch {
-                        delay(250)
-                        startCommandListenAfterWake()
-                    }
-                }
+                onUtteranceFinished(utteranceId)
             }
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String?) {
                 _isSpeaking.value = false
+                onUtteranceFinished(utteranceId)
             }
         })
 
@@ -165,8 +171,18 @@ class IrisForegroundService : Service(), PermissionBroker {
         scope.launch {
             agentLoop.runTurn(currentSettings, text) { event ->
                 events.emit(event)
-                if (event is AgentEvent.Final && currentSettings.speakAgentReplies) {
-                    speak(event.text)
+                when (event) {
+                    is AgentEvent.Final -> {
+                        if (currentSettings.speakAgentReplies) {
+                            speak(event.text, utteranceId = UTTERANCE_AGENT_REPLY)
+                            // Wake loop resumes in onUtteranceFinished once this actually finishes
+                            // speaking — see the fix note there for why that matters.
+                        } else {
+                            resumeWakeLoopAfterTurn()
+                        }
+                    }
+                    is AgentEvent.Error -> resumeWakeLoopAfterTurn()
+                    else -> {}
                 }
             }
         }
@@ -254,9 +270,11 @@ class IrisForegroundService : Service(), PermissionBroker {
     fun startWakeWordLoop() {
         if (!currentSettings.wakeWordEnabled) return
         wakeLoopWanted = true
-        if (awaitingCommandAfterWake) return // command capture is using the mic right now
-        wakeWordEngine?.start(currentSettings.wakeWord)
-        _isWakeListening.value = wakeWordEngine?.isRunning() ?: false
+        if (awaitingCommandAfterWake) return // command capture / reply is using the mic or speaker right now
+        scope.launch {
+            wakeWordEngine?.start(currentSettings.wakeWord)
+            _isWakeListening.value = wakeWordEngine?.isRunning() ?: false
+        }
     }
 
     fun stopWakeWordLoop() {
@@ -268,7 +286,9 @@ class IrisForegroundService : Service(), PermissionBroker {
 
     private fun onWakeWordDetected() {
         // Vosk and the command-capture SpeechRecognizer can't use the mic at the same time —
-        // pause wake detection while we listen for the actual command.
+        // pause wake detection while we listen for the actual command AND while the reply is
+        // being spoken (see resumeWakeLoopAfterTurn / onUtteranceFinished for why the latter
+        // matters — the wake loop used to come back on too early and interrupt the reply).
         wakeWordEngine?.stop()
         _isWakeListening.value = false
         awaitingCommandAfterWake = true
@@ -284,9 +304,11 @@ class IrisForegroundService : Service(), PermissionBroker {
         if (!awaitingCommandAfterWake) return
         runSingleShotListen(
             onResult = { text ->
-                awaitingCommandAfterWake = false
+                // NOTE: awaitingCommandAfterWake stays true here on purpose — it now only clears
+                // once the agent has actually finished responding (resumeWakeLoopAfterTurn), not
+                // the moment speech-to-text captured the words. That's the fix for the wake loop
+                // reopening and interrupting the command while it was still being carried out.
                 sendCommand(text)
-                if (wakeLoopWanted) startWakeWordLoop()
             },
             onError = {
                 awaitingCommandAfterWake = false
@@ -295,17 +317,138 @@ class IrisForegroundService : Service(), PermissionBroker {
         )
     }
 
+    /** Called once an agent turn is fully done — including having finished SPEAKING the reply, not
+     * just having computed it — so the wake loop can't reopen the mic mid-response anymore. */
+    private fun resumeWakeLoopAfterTurn() {
+        awaitingCommandAfterWake = false
+        if (wakeLoopWanted) startWakeWordLoop()
+    }
+
     // -----------------------------------------------------------------
-    // TTS
+    // TTS — device engine by default, Fish Audio if configured and reachable
     // -----------------------------------------------------------------
     private fun speak(text: String, utteranceId: String = "iris-utterance") {
-        // Fish Audio (or any other cloud TTS) can be wired in here later; falling back to the
-        // device's built-in engine keeps voice output fully free and working offline today.
+        if (currentSettings.ttsProvider == TtsProvider.FISH_AUDIO && currentSettings.fishAudioApiKey.isNotBlank()) {
+            scope.launch {
+                val played = trySpeakWithFishAudio(text, utteranceId)
+                if (!played) speakWithDeviceEngine(text, utteranceId)
+            }
+        } else {
+            speakWithDeviceEngine(text, utteranceId)
+        }
+    }
+
+    private fun speakWithDeviceEngine(text: String, utteranceId: String) {
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+    }
+
+    /** Fish Audio TTS via their REST API. Uses their free s2.1-pro-free model specifically — per
+     * Fish Audio's current pricing, that model is free during their current free-access period
+     * (subject to fair use), while their other/paid models require API credit and can return a 402
+     * "insufficient credit" error if used without it. This deliberately never requests a paid
+     * model, and falls back to the device voice (with a clear error surfaced) on any failure rather
+     * than silently doing nothing. */
+    private suspend fun trySpeakWithFishAudio(text: String, utteranceId: String): Boolean =
+        withContext(Dispatchers.IO) {
+            try {
+                val json = JSONObject()
+                    .put("text", text)
+                    .put("reference_id", currentSettings.fishAudioVoiceId)
+                    .put("model", "s2.1-pro-free")
+                val body = json.toString().toRequestBody("application/json".toMediaType())
+                val request = Request.Builder()
+                    .url("https://api.fish.audio/v1/tts")
+                    .header("Authorization", "Bearer ${currentSettings.fishAudioApiKey}")
+                    .post(body)
+                    .build()
+
+                http.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        val message = if (response.code == 402) {
+                            "Fish Audio returned 402 (insufficient credit). IRIS only requests the free " +
+                                "s2.1-pro-free model, so this usually means that free-tier access has " +
+                                "changed or a fair-use limit was hit — falling back to the device voice."
+                        } else {
+                            "Fish Audio request failed (${response.code}) — falling back to the device voice."
+                        }
+                        withContext(Dispatchers.Main) { events.tryEmit(AgentEvent.Error(message)) }
+                        return@withContext false
+                    }
+                    val bytes = response.body?.bytes()
+                    if (bytes == null || bytes.isEmpty()) {
+                        withContext(Dispatchers.Main) {
+                            events.tryEmit(AgentEvent.Error("Fish Audio returned no audio — falling back to the device voice."))
+                        }
+                        return@withContext false
+                    }
+                    val file = File(cacheDir, "fish-audio-${System.currentTimeMillis()}.mp3")
+                    file.writeBytes(bytes)
+                    withContext(Dispatchers.Main) { playAudioFile(file, utteranceId) }
+                    true
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    events.tryEmit(AgentEvent.Error("Fish Audio error: ${e.message} — falling back to the device voice."))
+                }
+                false
+            }
+        }
+
+    private fun playAudioFile(file: File, utteranceId: String) {
+        mediaPlayer?.release()
+        mediaPlayer = MediaPlayer().apply {
+            try {
+                setDataSource(file.absolutePath)
+                setOnPreparedListener {
+                    _isSpeaking.value = true
+                    it.start()
+                }
+                setOnCompletionListener { player ->
+                    _isSpeaking.value = false
+                    player.release()
+                    file.delete()
+                    onUtteranceFinished(utteranceId)
+                }
+                setOnErrorListener { player, _, _ ->
+                    _isSpeaking.value = false
+                    player.release()
+                    file.delete()
+                    onUtteranceFinished(utteranceId)
+                    true
+                }
+                prepareAsync()
+            } catch (e: Exception) {
+                events.tryEmit(AgentEvent.Error("Couldn't play Fish Audio response: ${e.message}"))
+                onUtteranceFinished(utteranceId)
+            }
+        }
+    }
+
+    /** Single place both TTS backends (device engine and Fish Audio) funnel into once they finish
+     * speaking — this is what makes the wake-loop-resume timing fix work regardless of which voice
+     * backend is active. */
+    private fun onUtteranceFinished(utteranceId: String?) {
+        when (utteranceId) {
+            UTTERANCE_WAKE_ACK -> {
+                // Short delay + main-thread dispatch: SpeechRecognizer must start on the main
+                // thread, and giving the audio system a moment to release the speaker avoids a
+                // race where the mic tries to grab it too early.
+                scope.launch {
+                    delay(250)
+                    startCommandListenAfterWake()
+                }
+            }
+            UTTERANCE_AGENT_REPLY -> resumeWakeLoopAfterTurn()
+        }
     }
 
     fun stopSpeaking() {
         tts?.stop()
+        mediaPlayer?.let {
+            try { it.stop() } catch (e: Exception) { /* ignore */ }
+            it.release()
+        }
+        mediaPlayer = null
         _isSpeaking.value = false
     }
 
@@ -370,11 +513,13 @@ class IrisForegroundService : Service(), PermissionBroker {
     override fun onDestroy() {
         wakeWordEngine?.stop()
         speechRecognizer?.destroy()
+        mediaPlayer?.release()
         tts?.shutdown()
         super.onDestroy()
     }
 
     companion object {
         private const val UTTERANCE_WAKE_ACK = "iris-wake-ack"
+        private const val UTTERANCE_AGENT_REPLY = "iris-agent-reply"
     }
 }

@@ -1,6 +1,8 @@
 package com.iris.android.voice
 
 import android.content.Context
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.vosk.Model
 import org.vosk.Recognizer
@@ -18,11 +20,15 @@ class VoskWakeWordEngine(
     private val onWakeWordDetected: () -> Unit,
     private val onError: (String) -> Unit
 ) {
-    private var model: Model? = null
     private var recognizer: Recognizer? = null
     private var speechService: SpeechService? = null
 
-    fun start(wakeWord: String) {
+    /** Suspend because loading the model (first time only) is a heavyweight, several-hundred-ms
+     * to multi-second operation — this MUST happen off the main thread, which was the cause of the
+     * lag when turning the wake word on. The model itself is cached process-wide afterward, so
+     * every subsequent start (e.g. after each command finishes) is fast — it only rebuilds the
+     * lightweight Recognizer/SpeechService, not the whole model. */
+    suspend fun start(wakeWord: String) {
         if (speechService != null) return
 
         if (!VoskModelManager.isModelReady(context)) {
@@ -32,7 +38,7 @@ class VoskWakeWordEngine(
 
         try {
             val word = wakeWord.trim().lowercase().ifBlank { "iris" }
-            model = Model(VoskModelManager.modelDir(context).absolutePath)
+            val model = withContext(Dispatchers.IO) { getOrLoadModel() }
             // Constraining the grammar to just the wake word (+ an "unknown" catch-all for
             // everything else) keeps this lightweight enough to run continuously.
             val grammar = "[\"$word\", \"[unk]\"]"
@@ -89,8 +95,23 @@ class VoskWakeWordEngine(
             // ignore
         }
         recognizer = null
-        model = null
+        // Deliberately NOT clearing the cached model here — see getOrLoadModel(). It stays loaded
+        // for the life of the process so repeated start/stop cycles stay fast.
     }
 
     fun isRunning(): Boolean = speechService != null
+
+    private fun getOrLoadModel(): Model {
+        cachedModel?.let { return it }
+        synchronized(this) {
+            cachedModel?.let { return it }
+            val loaded = Model(VoskModelManager.modelDir(context).absolutePath)
+            cachedModel = loaded
+            return loaded
+        }
+    }
+
+    companion object {
+        @Volatile private var cachedModel: Model? = null
+    }
 }
