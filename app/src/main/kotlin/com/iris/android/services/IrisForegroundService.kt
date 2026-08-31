@@ -351,14 +351,19 @@ class IrisForegroundService : Service(), PermissionBroker {
     private suspend fun trySpeakWithFishAudio(text: String, utteranceId: String): Boolean =
         withContext(Dispatchers.IO) {
             try {
+                // Per Fish Audio's own quickstart docs: the model selector goes in the HTTP
+                // header, NOT the JSON body — that mismatch was the actual cause of the 402
+                // (the server never saw which model was requested, so it silently fell through to
+                // a different/paid one and rejected the call for lacking credit).
                 val json = JSONObject()
                     .put("text", text)
                     .put("reference_id", currentSettings.fishAudioVoiceId)
-                    .put("model", "s2.1-pro-free")
+                    .put("format", "mp3")
                 val body = json.toString().toRequestBody("application/json".toMediaType())
                 val request = Request.Builder()
                     .url("https://api.fish.audio/v1/tts")
                     .header("Authorization", "Bearer ${currentSettings.fishAudioApiKey}")
+                    .header("model", "s2.1-pro-free")
                     .post(body)
                     .build()
 
