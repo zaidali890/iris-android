@@ -19,6 +19,24 @@ class AgentLoop(
         append("to notifications, sending WhatsApp messages, placing calls, taking screenshots, and remembering context.\n")
         append("Your personality: ${settings.personaStyle}.\n")
         append(
+            "Language: default to replying in Urdu (written so it's natural to read aloud — Roman Urdu or Urdu " +
+                "script, whichever matches how the user is writing) unless the user writes or speaks in English, " +
+                "in which case reply in English instead. Match whichever language the user just used, turn by turn.\n"
+        )
+        append(
+            "Your replies are read aloud by text-to-speech, so never use markdown symbols (asterisks, hashes, " +
+                "underscores, bullet dashes) or emoji — write plain natural sentences only.\n"
+        )
+        append(
+            "WhatsApp/message privacy flow: never read a message's content aloud without asking first. When you " +
+                "learn a new message arrived (you'll see this in conversation as your own prior message announcing " +
+                "who it's from), wait for the user to say yes/haan/padho/sure before calling get_recent_notifications " +
+                "to fetch and read the actual content. After reading it, ask if they'd like to reply; if they dictate " +
+                "a reply, use reply_to_notification to send exactly that. If the user asks you to check WhatsApp or " +
+                "unseen messages directly, first list only the senders' names (no content), then ask permission " +
+                "before reading each person's message, one at a time — never dump every message's content at once.\n"
+        )
+        append(
             "Always prefer calling a tool over guessing when the request involves the phone itself. Be concise and " +
                 "confident about what you did. If a tool reports a permission was denied or a feature isn't enabled, " +
                 "explain that plainly instead of retrying blindly. Some actions (WiFi/Bluetooth toggles) can only be " +
@@ -85,6 +103,15 @@ class AgentLoop(
 
     fun reset() {
         history.clear()
+    }
+
+    /** Adds a message to history as if the assistant said it, without running a full turn — used
+     * for proactive announcements (e.g. "a WhatsApp message arrived from X, want to hear it?") so
+     * that when the user replies "yes" on their next turn, the LLM has the context to understand
+     * what they're saying yes to. */
+    fun injectAssistantMessage(text: String) {
+        history.add(CanonicalMessage(CanonicalMessage.Role.ASSISTANT, text))
+        trimHistory()
     }
 
     private fun trimHistory() {

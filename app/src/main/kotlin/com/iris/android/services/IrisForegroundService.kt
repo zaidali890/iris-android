@@ -82,10 +82,10 @@ class IrisForegroundService : Service(), PermissionBroker {
     private var awaitingCommandAfterWake = false
 
     private val wakeAckReplies = listOf(
-        "Yes boss, I'm listening.",
-        "Yes boss! What can I do for you?",
-        "I'm here, boss — go ahead.",
-        "Yes boss, what do you need?"
+        "Ji boss, main sun rahi hoon.",
+        "Ji boss, bataiye kya karna hai.",
+        "Main hazir hoon boss, bataiye.",
+        "Ji, boliye — main sun rahi hoon."
     )
 
     data class PermissionRequestUi(val toolName: String, val summary: String, val detail: String?)
@@ -328,14 +328,23 @@ class IrisForegroundService : Service(), PermissionBroker {
     // TTS — device engine by default, Fish Audio if configured and reachable
     // -----------------------------------------------------------------
     private fun speak(text: String, utteranceId: String = "iris-utterance") {
+        val cleaned = cleanForSpeech(text)
         if (currentSettings.ttsProvider == TtsProvider.FISH_AUDIO && currentSettings.fishAudioApiKey.isNotBlank()) {
             scope.launch {
-                val played = trySpeakWithFishAudio(text, utteranceId)
-                if (!played) speakWithDeviceEngine(text, utteranceId)
+                val played = trySpeakWithFishAudio(cleaned, utteranceId)
+                if (!played) speakWithDeviceEngine(cleaned, utteranceId)
             }
         } else {
-            speakWithDeviceEngine(text, utteranceId)
+            speakWithDeviceEngine(cleaned, utteranceId)
         }
+    }
+
+    /** Strips markdown symbols and emoji before speaking — otherwise TTS engines either read them
+     * out literally ("asterisk", "hash") or garble on them entirely. */
+    private fun cleanForSpeech(text: String): String {
+        var cleaned = text.replace(Regex("[*_`#~]"), "")
+        cleaned = cleaned.replace(EMOJI_REGEX, "")
+        return cleaned.replace(Regex(" {2,}"), " ").trim()
     }
 
     private fun speakWithDeviceEngine(text: String, utteranceId: String) {
@@ -505,8 +514,16 @@ class IrisForegroundService : Service(), PermissionBroker {
 
                 val unspoken = dao.getUnspoken()
                 for (n in unspoken.filter { it.packageName in allowed }) {
-                    val body = "${n.title}. ${n.text}".take(200)
-                    speak("${n.appLabel} says: $body")
+                    // Announce who it's from ONLY — never read message content without asking
+                    // first. This gets added to the agent's own conversation history (not just
+                    // spoken aloud) so that when the user replies "yes"/"haan", the LLM has the
+                    // context to know what they're confirming and can fetch the real content
+                    // itself via get_recent_notifications.
+                    val announcement = "Sir, ${n.appLabel} se ek naya message aaya hai ${n.title} ki taraf se — " +
+                        "kya aap sunna chahenge?"
+                    agentLoop.injectAssistantMessage(announcement)
+                    events.tryEmit(AgentEvent.Final(announcement))
+                    speak(announcement)
                 }
                 // Mark ALL unspoken notifications as handled, including ones from apps not in the
                 // allow-list, so they don't pile up in the queue forever waiting to be spoken.
@@ -526,5 +543,7 @@ class IrisForegroundService : Service(), PermissionBroker {
     companion object {
         private const val UTTERANCE_WAKE_ACK = "iris-wake-ack"
         private const val UTTERANCE_AGENT_REPLY = "iris-agent-reply"
+        // Covers most common emoji blocks, including surrogate-pair (supplementary plane) emoji.
+        private val EMOJI_REGEX = Regex("[\u2600-\u27BF\u2190-\u21FF\u2300-\u23FF\uFE0F\uD83C-\uDBFF\uDC00-\uDFFF]+")
     }
 }
