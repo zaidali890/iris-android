@@ -242,7 +242,11 @@ class IrisForegroundService : Service(), PermissionBroker {
 
     private fun buildRecognizerIntent() = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+        // This used to always be Locale.getDefault() (the phone's system language), which is why
+        // Urdu speech was being force-matched against English sound patterns — "kaun hai" becoming
+        // "core" is exactly what happens when a recognizer is told to expect English. Configurable
+        // in Settings → Voice, defaults to Urdu (Pakistan).
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE, currentSettings.sttLanguage)
     }
 
     private fun simpleListener(onResult: (String) -> Unit, onError: (String) -> Unit) =
@@ -285,19 +289,30 @@ class IrisForegroundService : Service(), PermissionBroker {
     }
 
     private fun onWakeWordDetected() {
-        // Vosk and the command-capture SpeechRecognizer can't use the mic at the same time —
-        // pause wake detection while we listen for the actual command AND while the reply is
-        // being spoken (see resumeWakeLoopAfterTurn / onUtteranceFinished for why the latter
-        // matters — the wake loop used to come back on too early and interrupt the reply).
+        announceAndListen(wakeAckReplies.random(), injectIntoHistory = false)
+    }
+
+    /** Speaks a message, then immediately listens for the user's spoken answer once done — instead
+     * of going back to background listening and waiting to be re-woken. This is what was missing
+     * for the "Leeza asks a question, user replies, nothing happens" bug: previously only the wake
+     * word itself triggered a listen; a proactive announcement (like a new-message alert) just
+     * spoke and went silent, so the user's answer had nowhere to go until they said the wake word
+     * again — by which point the conversational context was gone too.
+     *
+     * @param injectIntoHistory true for announcements that carry information the user might refer
+     *   back to (e.g. "a message arrived from X") — false for filler acknowledgments like "yes boss"
+     *   that don't need to clutter the conversation history.
+     */
+    private fun announceAndListen(text: String, injectIntoHistory: Boolean) {
         wakeWordEngine?.stop()
         _isWakeListening.value = false
         awaitingCommandAfterWake = true
-        val ack = wakeAckReplies.random()
+        if (injectIntoHistory) agentLoop.injectAssistantMessage(text)
         // Shown in the Command tab regardless of whether TTS audio actually plays — lets you tell
         // "wake word wasn't detected" apart from "detected fine, but the speaker/TTS engine didn't
         // say it out loud" if something's still off.
-        events.tryEmit(AgentEvent.Final(ack))
-        speak(ack, utteranceId = UTTERANCE_WAKE_ACK)
+        events.tryEmit(AgentEvent.Final(text))
+        speak(text, utteranceId = UTTERANCE_WAKE_ACK)
     }
 
     private fun startCommandListenAfterWake() {
@@ -440,19 +455,24 @@ class IrisForegroundService : Service(), PermissionBroker {
 
     /** Single place both TTS backends (device engine and Fish Audio) funnel into once they finish
      * speaking — this is what makes the wake-loop-resume timing fix work regardless of which voice
-     * backend is active. */
+     * backend is active. Both the wake-ack AND a normal agent reply lead to listening again — that's
+     * what keeps a multi-turn exchange (wake → "read it?" → "haan" → reads message → "reply?" →
+     * "haan, say I'm on my way") going without needing to re-say the wake word at every step. The
+     * conversation only drops back to background wake-word listening once a listen attempt actually
+     * comes back empty (see startCommandListenAfterWake's onError) — i.e. the user actually went quiet. */
     private fun onUtteranceFinished(utteranceId: String?) {
         when (utteranceId) {
-            UTTERANCE_WAKE_ACK -> {
-                // Short delay + main-thread dispatch: SpeechRecognizer must start on the main
-                // thread, and giving the audio system a moment to release the speaker avoids a
-                // race where the mic tries to grab it too early.
-                scope.launch {
-                    delay(250)
-                    startCommandListenAfterWake()
+            UTTERANCE_WAKE_ACK, UTTERANCE_AGENT_REPLY -> {
+                if (awaitingCommandAfterWake) {
+                    // Short delay + main-thread dispatch: SpeechRecognizer must start on the main
+                    // thread, and giving the audio system a moment to release the speaker avoids a
+                    // race where the mic tries to grab it too early.
+                    scope.launch {
+                        delay(250)
+                        startCommandListenAfterWake()
+                    }
                 }
             }
-            UTTERANCE_AGENT_REPLY -> resumeWakeLoopAfterTurn()
         }
     }
 
@@ -505,6 +525,10 @@ class IrisForegroundService : Service(), PermissionBroker {
             while (true) {
                 delay(4000)
                 if (!currentSettings.autoSpeakNotifications) continue
+                // Don't interrupt an in-progress conversation turn (wake ack, command capture, or
+                // an earlier announcement still awaiting its answer) — wait for the next cycle
+                // once Leeza is free again, instead of overlapping two questions at once.
+                if (awaitingCommandAfterWake) continue
                 val allowed = currentSettings.notifAllowedPackages
                     .split(",")
                     .map { it.trim() }
@@ -513,21 +537,21 @@ class IrisForegroundService : Service(), PermissionBroker {
                 if (allowed.isEmpty()) continue
 
                 val unspoken = dao.getUnspoken()
-                for (n in unspoken.filter { it.packageName in allowed }) {
-                    // Announce who it's from ONLY — never read message content without asking
-                    // first. This gets added to the agent's own conversation history (not just
-                    // spoken aloud) so that when the user replies "yes"/"haan", the LLM has the
-                    // context to know what they're confirming and can fetch the real content
-                    // itself via get_recent_notifications.
-                    val announcement = "Sir, ${n.appLabel} se ek naya message aaya hai ${n.title} ki taraf se — " +
-                        "kya aap sunna chahenge?"
-                    agentLoop.injectAssistantMessage(announcement)
-                    events.tryEmit(AgentEvent.Final(announcement))
-                    speak(announcement)
+                val (relevant, ignored) = unspoken.partition { it.packageName in allowed }
+                // Not in the allow-list — never going to be announced, so clear them out now
+                // rather than re-checking them forever.
+                ignored.forEach { dao.markSpoken(it.key) }
+
+                // Only announce ONE at a time, even if several arrived at once — announcing them
+                // all in a row would overlap into a confusing pile-up of questions. The rest stay
+                // queued (still unspoken) and get picked up on a later cycle once this one's answered.
+                val next = relevant.firstOrNull()
+                if (next != null) {
+                    dao.markSpoken(next.key)
+                    val announcement = "Sir, ${next.appLabel} se ek naya message aaya hai ${next.title} ki " +
+                        "taraf se — kya aap sunna chahenge?"
+                    announceAndListen(announcement, injectIntoHistory = true)
                 }
-                // Mark ALL unspoken notifications as handled, including ones from apps not in the
-                // allow-list, so they don't pile up in the queue forever waiting to be spoken.
-                unspoken.forEach { dao.markSpoken(it.key) }
             }
         }
     }

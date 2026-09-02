@@ -36,6 +36,7 @@ data class IrisSettings(
     val notifAllowedPackages: String = "com.whatsapp,com.whatsapp.w4b",
     val wakeWordEnabled: Boolean = false,
     val wakeWord: String = "leeza",
+    val sttLanguage: String = "ur-PK",
     val speakAgentReplies: Boolean = true,
     val autoReplyEnabled: Boolean = false,
     val autoAnswerCalls: Boolean = false,
@@ -64,6 +65,7 @@ object Keys {
     val NOTIF_ALLOWED_PACKAGES = stringPreferencesKey("notif_allowed_packages")
     val WAKE_WORD_ENABLED = booleanPreferencesKey("wake_word_enabled")
     val WAKE_WORD = stringPreferencesKey("wake_word")
+    val STT_LANGUAGE = stringPreferencesKey("stt_language")
     val SPEAK_AGENT_REPLIES = booleanPreferencesKey("speak_agent_replies")
     val AUTO_REPLY = booleanPreferencesKey("auto_reply")
     val AUTO_ANSWER = booleanPreferencesKey("auto_answer")
@@ -100,6 +102,7 @@ class SettingsRepository(private val context: Context) {
             notifAllowedPackages = p[Keys.NOTIF_ALLOWED_PACKAGES] ?: "com.whatsapp,com.whatsapp.w4b",
             wakeWordEnabled = p[Keys.WAKE_WORD_ENABLED] ?: false,
             wakeWord = p[Keys.WAKE_WORD] ?: "leeza",
+            sttLanguage = p[Keys.STT_LANGUAGE] ?: "ur-PK",
             speakAgentReplies = p[Keys.SPEAK_AGENT_REPLIES] ?: true,
             autoReplyEnabled = p[Keys.AUTO_REPLY] ?: false,
             autoAnswerCalls = p[Keys.AUTO_ANSWER] ?: false,
@@ -128,6 +131,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun setNotifAllowedPackages(v: String) = context.dataStore.edit { it[Keys.NOTIF_ALLOWED_PACKAGES] = v }
     suspend fun setWakeWordEnabled(v: Boolean) = context.dataStore.edit { it[Keys.WAKE_WORD_ENABLED] = v }
     suspend fun setWakeWord(v: String) = context.dataStore.edit { it[Keys.WAKE_WORD] = v }
+    suspend fun setSttLanguage(v: String) = context.dataStore.edit { it[Keys.STT_LANGUAGE] = v }
     suspend fun setSpeakAgentReplies(v: Boolean) = context.dataStore.edit { it[Keys.SPEAK_AGENT_REPLIES] = v }
     suspend fun setAutoReply(v: Boolean) = context.dataStore.edit { it[Keys.AUTO_REPLY] = v }
     suspend fun setAutoAnswer(v: Boolean) = context.dataStore.edit { it[Keys.AUTO_ANSWER] = v }

@@ -33,8 +33,11 @@ class AgentLoop(
                 "who it's from), wait for the user to say yes/haan/padho/sure before calling get_recent_notifications " +
                 "to fetch and read the actual content. After reading it, ask if they'd like to reply; if they dictate " +
                 "a reply, use reply_to_notification to send exactly that. If the user asks you to check WhatsApp or " +
-                "unseen messages directly, first list only the senders' names (no content), then ask permission " +
-                "before reading each person's message, one at a time — never dump every message's content at once.\n"
+                "unseen messages directly, use check_whatsapp_messages (not get_recent_notifications) so other apps' " +
+                "notifications don't get mixed in — list only the senders' names first, then ask permission before " +
+                "reading each person's message, one at a time, using get_messages_from_contact for the content. " +
+                "Never dump every message's content at once. Be upfront that you can only see messages that arrived " +
+                "while you were running — not full chat history, since WhatsApp doesn't expose that to any app.\n"
         )
         append(
             "Always prefer calling a tool over guessing when the request involves the phone itself. Be concise and " +

@@ -91,6 +91,27 @@ object ToolDefs {
             mapOf("limit" to p("number", "Max number of notifications to return, default 10"))
         ),
         ToolDef(
+            "get_messages_from_contact",
+            "Search notifications IRIS has already captured for messages from a specific person by " +
+                "name (matches the notification's sender/title field). Only covers messages that arrived " +
+                "while IRIS was running and captured them — this is NOT full chat history, since WhatsApp " +
+                "doesn't expose that to any third-party app. Be upfront about that limit if asked for older " +
+                "messages than what this returns.",
+            mapOf(
+                "contactName" to p("string", "Name (or part of the name) to search for"),
+                "limit" to p("number", "Max number of matching messages to return, default 10")
+            ),
+            required = listOf("contactName")
+        ),
+        ToolDef(
+            "check_whatsapp_messages",
+            "List who has sent WhatsApp messages IRIS has captured, grouped by sender — use this " +
+                "instead of get_recent_notifications when the user specifically asks about WhatsApp, " +
+                "so other apps' notifications don't get mixed in. Lists names only; use " +
+                "get_messages_from_contact or reply_to_notification afterward for a specific person's content.",
+            emptyMap()
+        ),
+        ToolDef(
             "reply_to_notification",
             "Send a reply to a message notification (e.g. WhatsApp, SMS) using its built-in quick-reply action, by notification key.",
             mapOf(

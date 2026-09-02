@@ -53,6 +53,11 @@ class ToolExecutorImpl(
                 (args["minutesFromNow"] as? Number)?.toDouble() ?: 1.0
             )
             "get_recent_notifications" -> getRecentNotifications((args["limit"] as? Number)?.toInt() ?: 10)
+            "get_messages_from_contact" -> getMessagesFromContact(
+                args["contactName"].toString(),
+                (args["limit"] as? Number)?.toInt() ?: 10
+            )
+            "check_whatsapp_messages" -> checkWhatsAppMessages()
             "reply_to_notification" -> replyToNotification(
                 args["notificationKey"].toString(),
                 args["message"].toString()
@@ -180,6 +185,32 @@ class ToolExecutorImpl(
         if (all.isEmpty()) return@withContext "No notifications captured yet."
         all.take(limit).joinToString("\n") {
             "[${it.key}] ${it.appLabel}: ${it.title} — ${it.text}${if (it.hasReplyAction) " (reply available)" else ""}"
+        }
+    }
+
+    /** Only notifications IRIS has actually captured while running — never full chat history,
+     * since neither WhatsApp nor Android expose that to any third-party app. */
+    private suspend fun getMessagesFromContact(contactName: String, limit: Int): String = withContext(Dispatchers.IO) {
+        val query = contactName.trim().lowercase()
+        val matches = notificationDao.getAll().filter { it.title.lowercase().contains(query) }
+        if (matches.isEmpty()) {
+            "No captured messages from \"$contactName\" — this only covers messages that arrived while " +
+                "IRIS was running, not full chat history."
+        } else {
+            matches.take(limit).joinToString("\n") { "[${it.key}] ${it.appLabel}: ${it.text}" }
+        }
+    }
+
+    /** Filters strictly to WhatsApp, so a query like "check my WhatsApp" isn't confused by other
+     * apps' notifications mixed into the same list — a real accuracy improvement over always using
+     * the generic get_recent_notifications for WhatsApp-specific requests. */
+    private suspend fun checkWhatsAppMessages(): String = withContext(Dispatchers.IO) {
+        val whatsappPackages = setOf("com.whatsapp", "com.whatsapp.w4b")
+        val messages = notificationDao.getAll().filter { it.packageName in whatsappPackages }
+        if (messages.isEmpty()) return@withContext "No WhatsApp messages captured yet."
+        val bySender = messages.groupBy { it.title }
+        bySender.entries.joinToString("\n") { (sender, msgs) ->
+            "$sender: ${msgs.size} message(s), most recent key [${msgs.first().key}]"
         }
     }
 

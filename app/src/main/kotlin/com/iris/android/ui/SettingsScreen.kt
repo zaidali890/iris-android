@@ -140,6 +140,11 @@ fun SettingsScreen(
             ToggleRow("Speak IRIS's replies out loud", settings.speakAgentReplies) {
                 scope.launch { repo.setSpeakAgentReplies(it) }
             }
+            LabeledField(
+                "Speech recognition language (e.g. ur-PK, ur-IN, en-US, en-IN) — applies to both " +
+                    "the mic button and wake-word commands",
+                settings.sttLanguage
+            ) { scope.launch { repo.setSttLanguage(it) } }
             ToggleRow(
                 "\"Wake up IRIS\" — genuinely continuous background listening",
                 settings.wakeWordEnabled
