@@ -497,7 +497,8 @@ class IrisForegroundService : Service(), PermissionBroker {
                 mainExecutor,
                 object : TelephonyCallback(), TelephonyCallback.CallStateListener {
                     override fun onCallStateChanged(state: Int) {
-                        if (state == TelephonyManager.CALL_STATE_RINGING && currentSettings.autoAnswerCalls) {
+                        if (state != TelephonyManager.CALL_STATE_RINGING) return
+                        if (currentSettings.autoAnswerCalls) {
                             scope.launch {
                                 delay(1200) // let the ringing screen settle before answering
                                 try {
@@ -506,6 +507,14 @@ class IrisForegroundService : Service(), PermissionBroker {
                                 } catch (e: SecurityException) {
                                     // ANSWER_PHONE_CALLS not granted — silently skip, user will see the call ring normally
                                 }
+                            }
+                        } else if (currentSettings.announceIncomingCalls) {
+                            scope.launch {
+                                delay(800) // give CallScreeningService a moment to have already populated caller info
+                                val caller = IrisCallScreeningService.lastIncomingCall
+                                val who = caller?.name ?: caller?.number ?: "an unknown number"
+                                val announcement = "Sir, $who ka phone hai, kya aap attend karna chahenge?"
+                                announceAndListen(announcement, injectIntoHistory = true)
                             }
                         }
                     }

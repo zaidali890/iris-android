@@ -282,6 +282,21 @@ fun SettingsScreen(
             ToggleRow("Auto-answer phone calls", settings.autoAnswerCalls) {
                 scope.launch { repo.setAutoAnswer(it) }
             }
+            if (!settings.autoAnswerCalls) {
+                ToggleRow(
+                    "Announce incoming calls, accept/reject by voice",
+                    settings.announceIncomingCalls
+                ) { scope.launch { repo.setAnnounceIncomingCalls(it) } }
+                if (settings.announceIncomingCalls) {
+                    Text(
+                        "Rejecting is best-effort — Android restricts non-default-dialer apps from " +
+                            "hanging up calls, so this may not work on every device/Android version.",
+                        color = TextMuted,
+                        fontSize = 10.sp,
+                        modifier = Modifier.padding(top = 2.dp, bottom = 4.dp)
+                    )
+                }
+            }
 
             val accessibilityOn = IrisAccessibilityService.isEnabled()
             Row(

@@ -51,6 +51,10 @@ fun PermissionsScreen(onDone: () -> Unit) {
         refreshTick++
     }
 
+    val callScreeningLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { refreshTick++ }
+
     val rows = remember(refreshTick) {
         listOf(
             PermRow(
@@ -130,6 +134,27 @@ fun PermissionsScreen(onDone: () -> Unit) {
                             data = Uri.parse("package:${context.packageName}")
                         }
                     )
+                }
+            ),
+            PermRow(
+                "Incoming call announcing (optional)",
+                "Needed for Leeza to announce and act on incoming calls by voice. A system screen " +
+                    "will ask you to set IRIS as your \"Caller ID & spam\" app — this does not change " +
+                    "your default phone/dialer app. Requires Android 10 or newer.",
+                { c ->
+                    if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) {
+                        true // nothing to grant on older Android — don't show this as "needs action"
+                    } else {
+                        val roleManager = c.getSystemService(android.app.role.RoleManager::class.java)
+                        roleManager?.isRoleHeld(android.app.role.RoleManager.ROLE_CALL_SCREENING) == true
+                    }
+                },
+                {
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                        val roleManager = context.getSystemService(android.app.role.RoleManager::class.java)
+                        val intent = roleManager?.createRequestRoleIntent(android.app.role.RoleManager.ROLE_CALL_SCREENING)
+                        if (intent != null) callScreeningLauncher.launch(intent)
+                    }
                 }
             )
         )

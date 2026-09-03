@@ -40,6 +40,7 @@ data class IrisSettings(
     val speakAgentReplies: Boolean = true,
     val autoReplyEnabled: Boolean = false,
     val autoAnswerCalls: Boolean = false,
+    val announceIncomingCalls: Boolean = false,
     val accessibilityAutomationEnabled: Boolean = false,
     val requireConfirmForDestructive: Boolean = true
 )
@@ -69,6 +70,7 @@ object Keys {
     val SPEAK_AGENT_REPLIES = booleanPreferencesKey("speak_agent_replies")
     val AUTO_REPLY = booleanPreferencesKey("auto_reply")
     val AUTO_ANSWER = booleanPreferencesKey("auto_answer")
+    val ANNOUNCE_CALLS = booleanPreferencesKey("announce_calls")
     val ACCESSIBILITY_AUTOMATION = booleanPreferencesKey("accessibility_automation")
     val CONFIRM_DESTRUCTIVE = booleanPreferencesKey("confirm_destructive")
     val REMOTE_PORT = intPreferencesKey("remote_port")
@@ -106,6 +108,7 @@ class SettingsRepository(private val context: Context) {
             speakAgentReplies = p[Keys.SPEAK_AGENT_REPLIES] ?: true,
             autoReplyEnabled = p[Keys.AUTO_REPLY] ?: false,
             autoAnswerCalls = p[Keys.AUTO_ANSWER] ?: false,
+            announceIncomingCalls = p[Keys.ANNOUNCE_CALLS] ?: false,
             accessibilityAutomationEnabled = p[Keys.ACCESSIBILITY_AUTOMATION] ?: false,
             requireConfirmForDestructive = p[Keys.CONFIRM_DESTRUCTIVE] ?: true
         )
@@ -135,6 +138,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun setSpeakAgentReplies(v: Boolean) = context.dataStore.edit { it[Keys.SPEAK_AGENT_REPLIES] = v }
     suspend fun setAutoReply(v: Boolean) = context.dataStore.edit { it[Keys.AUTO_REPLY] = v }
     suspend fun setAutoAnswer(v: Boolean) = context.dataStore.edit { it[Keys.AUTO_ANSWER] = v }
+    suspend fun setAnnounceIncomingCalls(v: Boolean) = context.dataStore.edit { it[Keys.ANNOUNCE_CALLS] = v }
     suspend fun setAccessibilityAutomation(v: Boolean) =
         context.dataStore.edit { it[Keys.ACCESSIBILITY_AUTOMATION] = v }
     suspend fun setConfirmDestructive(v: Boolean) = context.dataStore.edit { it[Keys.CONFIRM_DESTRUCTIVE] = v }

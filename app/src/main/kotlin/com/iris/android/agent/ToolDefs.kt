@@ -139,6 +139,19 @@ object ToolDefs {
             dangerous = true
         ),
         ToolDef(
+            "accept_call",
+            "Accept the currently ringing incoming phone call.",
+            emptyMap()
+        ),
+        ToolDef(
+            "reject_call",
+            "Decline/reject the currently ringing incoming phone call. Best-effort — Android " +
+                "restricts non-default-dialer apps from hanging up calls, so this may not work on " +
+                "every device/Android version; report clearly if it fails rather than assuming success.",
+            emptyMap(),
+            dangerous = true
+        ),
+        ToolDef(
             "get_device_status",
             "Get battery level, network connection type, and ringer mode.",
             emptyMap()

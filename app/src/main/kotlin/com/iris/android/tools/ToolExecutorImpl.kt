@@ -64,6 +64,8 @@ class ToolExecutorImpl(
             )
             "send_whatsapp_message" -> sendWhatsAppMessage(args["contact"].toString(), args["message"].toString())
             "call_contact" -> callContact(args["contact"].toString())
+            "accept_call" -> acceptCall()
+            "reject_call" -> rejectCall()
             "get_device_status" -> getDeviceStatus()
             else -> throw IllegalArgumentException("Unknown tool: $name")
         }
@@ -293,6 +295,39 @@ class ToolExecutorImpl(
         val intent = Intent(Intent.ACTION_CALL, Uri.parse("tel:${match.number}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)
         return "Calling ${match.name}."
+    }
+
+    private fun acceptCall(): String {
+        return try {
+            val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as android.telecom.TelecomManager
+            telecomManager.acceptRingingCall()
+            "Call accepted."
+        } catch (e: SecurityException) {
+            "Couldn't accept the call — the phone permission isn't granted. Check Settings → Review system permissions."
+        } catch (e: Exception) {
+            "Couldn't accept the call: ${e.message}"
+        }
+    }
+
+    /** Best-effort — Android has restricted non-default-dialer apps from hanging up calls since
+     * roughly Android 9, and there's no fully public, guaranteed-stable API for it anymore. This
+     * uses the same reflection-based approach call-blocker apps have historically relied on; it
+     * works on many devices today but isn't guaranteed and could stop working after an OS update. */
+    private fun rejectCall(): String {
+        return try {
+            val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as android.telephony.TelephonyManager
+            val telephonyClass = Class.forName(telephonyManager.javaClass.name)
+            val getITelephonyMethod = telephonyClass.getDeclaredMethod("getITelephony")
+            getITelephonyMethod.isAccessible = true
+            val iTelephony = getITelephonyMethod.invoke(telephonyManager)
+            val endCallMethod = Class.forName(iTelephony.javaClass.name).getDeclaredMethod("endCall")
+            endCallMethod.isAccessible = true
+            endCallMethod.invoke(iTelephony)
+            "Call rejected."
+        } catch (e: Exception) {
+            "Couldn't reject the call automatically — Android is blocking that on this device/version. " +
+                "Please decline it manually this time."
+        }
     }
 
     // -----------------------------------------------------------------
