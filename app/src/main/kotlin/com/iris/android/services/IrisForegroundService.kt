@@ -247,6 +247,33 @@ class IrisForegroundService : Service(), PermissionBroker {
         // "core" is exactly what happens when a recognizer is told to expect English. Configurable
         // in Settings → Voice, defaults to Urdu (Pakistan).
         putExtra(RecognizerIntent.EXTRA_LANGUAGE, currentSettings.sttLanguage)
+        // Gives more breathing room before the recognizer decides you're done talking — this is a
+        // single finite capture (not a restart loop like the old wake-word approach), so a longer
+        // window here is safe and should help with "mic closes after barely a second."
+        putExtra("android.speech.extra.SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS", 2500)
+        putExtra("android.speech.extra.SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS", 2500)
+        putExtra("android.speech.extra.SPEECH_INPUT_MINIMUM_LENGTH_MILLIS", 15000)
+    }
+
+    private fun speechErrorName(code: Int): String = when (code) {
+        SpeechRecognizer.ERROR_NETWORK -> "ERROR_NETWORK (no internet reaching the speech service)"
+        SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "ERROR_NETWORK_TIMEOUT (internet too slow/unreachable)"
+        SpeechRecognizer.ERROR_NO_MATCH -> "ERROR_NO_MATCH (heard nothing recognizable)"
+        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "ERROR_SPEECH_TIMEOUT (didn't hear you start talking in time)"
+        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "ERROR_RECOGNIZER_BUSY"
+        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "ERROR_INSUFFICIENT_PERMISSIONS (mic permission issue)"
+        SpeechRecognizer.ERROR_SERVER -> "ERROR_SERVER"
+        SpeechRecognizer.ERROR_CLIENT -> "ERROR_CLIENT"
+        SpeechRecognizer.ERROR_AUDIO -> "ERROR_AUDIO"
+        else -> {
+            // API 31+ constants not available pre-31 by name, but the numeric code still tells us:
+            // 12 = ERROR_LANGUAGE_NOT_SUPPORTED, 13 = ERROR_LANGUAGE_UNAVAILABLE
+            when (code) {
+                12 -> "ERROR_LANGUAGE_NOT_SUPPORTED (this device's speech engine doesn't support the ur-PK language setting)"
+                13 -> "ERROR_LANGUAGE_UNAVAILABLE (ur-PK not available, but a related language might be)"
+                else -> "error code $code"
+            }
+        }
     }
 
     private fun simpleListener(onResult: (String) -> Unit, onError: (String) -> Unit) =
@@ -257,7 +284,7 @@ class IrisForegroundService : Service(), PermissionBroker {
                 if (text != null) onResult(text) else onError("Didn't catch that.")
             }
             override fun onError(error: Int) {
-                onError("Speech recognition error ($error).")
+                onError(speechErrorName(error))
             }
             override fun onReadyForSpeech(params: Bundle?) {}
             override fun onBeginningOfSpeech() {}
@@ -325,7 +352,13 @@ class IrisForegroundService : Service(), PermissionBroker {
                 // reopening and interrupting the command while it was still being carried out.
                 sendCommand(text)
             },
-            onError = {
+            onError = { message ->
+                // Surfaced visibly now — this was silently swallowed before, which is exactly why
+                // "mic opens for a second then sleeps" couldn't be diagnosed. If this shows a
+                // language-related error, ur-PK likely isn't supported by this device's speech
+                // engine; if it's ERROR_SPEECH_TIMEOUT/ERROR_NO_MATCH, it's just not hearing you in
+                // time, which the longer window below should help with.
+                events.tryEmit(AgentEvent.Error("Didn't catch your command: $message"))
                 awaitingCommandAfterWake = false
                 if (wakeLoopWanted) startWakeWordLoop()
             }
