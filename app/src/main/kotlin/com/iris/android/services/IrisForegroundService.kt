@@ -247,12 +247,10 @@ class IrisForegroundService : Service(), PermissionBroker {
         // "core" is exactly what happens when a recognizer is told to expect English. Configurable
         // in Settings → Voice, defaults to Urdu (Pakistan).
         putExtra(RecognizerIntent.EXTRA_LANGUAGE, currentSettings.sttLanguage)
-        // Gives more breathing room before the recognizer decides you're done talking — this is a
-        // single finite capture (not a restart loop like the old wake-word approach), so a longer
-        // window here is safe and should help with "mic closes after barely a second."
-        putExtra("android.speech.extra.SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS", 2500)
-        putExtra("android.speech.extra.SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS", 2500)
-        putExtra("android.speech.extra.SPEECH_INPUT_MINIMUM_LENGTH_MILLIS", 15000)
+        // NOTE: previously tried SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS and similar hidden
+        // extras here to extend the listening window — confirmed on this device (twice, in two
+        // different flows) that they're simply not honored. Removed; see startCommandListenAfterWake
+        // for the actual fix (chaining multiple short bursts together instead).
     }
 
     private fun speechErrorName(code: Int): String = when (code) {
@@ -342,25 +340,41 @@ class IrisForegroundService : Service(), PermissionBroker {
         speak(text, utteranceId = UTTERANCE_WAKE_ACK)
     }
 
+    // Accumulates text across multiple recognizer bursts so a longer sentence doesn't get cut off
+    // — the recognizer's own "how long to wait before deciding you're done" timing hints turned out
+    // to not be honored on this device (confirmed twice), so instead of relying on one long burst,
+    // this immediately starts another burst after each one that catches real speech, and only stops
+    // (submitting whatever's been accumulated) once a burst comes back truly empty — i.e. the user
+    // actually paused/finished, not just a mid-sentence breath.
+    private var commandBuffer = StringBuilder()
+
     private fun startCommandListenAfterWake() {
         if (!awaitingCommandAfterWake) return
+        commandBuffer = StringBuilder()
+        listenNextChunk()
+    }
+
+    private fun listenNextChunk() {
         runSingleShotListen(
             onResult = { text ->
+                if (commandBuffer.isNotEmpty()) commandBuffer.append(" ")
+                commandBuffer.append(text)
+                // Immediately listen for more — if they were mid-sentence, this continues it with
+                // no perceptible gap beyond the device's own recognizer restart time.
+                listenNextChunk()
+            },
+            onError = { message ->
                 // NOTE: awaitingCommandAfterWake stays true here on purpose — it now only clears
                 // once the agent has actually finished responding (resumeWakeLoopAfterTurn), not
                 // the moment speech-to-text captured the words. That's the fix for the wake loop
                 // reopening and interrupting the command while it was still being carried out.
-                sendCommand(text)
-            },
-            onError = { message ->
-                // Surfaced visibly now — this was silently swallowed before, which is exactly why
-                // "mic opens for a second then sleeps" couldn't be diagnosed. If this shows a
-                // language-related error, ur-PK likely isn't supported by this device's speech
-                // engine; if it's ERROR_SPEECH_TIMEOUT/ERROR_NO_MATCH, it's just not hearing you in
-                // time, which the longer window below should help with.
-                events.tryEmit(AgentEvent.Error("Didn't catch your command: $message"))
-                awaitingCommandAfterWake = false
-                if (wakeLoopWanted) startWakeWordLoop()
+                if (commandBuffer.isNotEmpty()) {
+                    sendCommand(commandBuffer.toString())
+                } else {
+                    events.tryEmit(AgentEvent.Error("Didn't catch your command: $message"))
+                    awaitingCommandAfterWake = false
+                    if (wakeLoopWanted) startWakeWordLoop()
+                }
             }
         )
     }
@@ -590,8 +604,12 @@ class IrisForegroundService : Service(), PermissionBroker {
                 val next = relevant.firstOrNull()
                 if (next != null) {
                     dao.markSpoken(next.key)
-                    val announcement = "Sir, ${next.appLabel} se ek naya message aaya hai ${next.title} ki " +
-                        "taraf se — kya aap sunna chahenge?"
+                    val announcement = if (next.isCallCategory) {
+                        "Sir, ${next.title} ka WhatsApp call hai, kya aap attend karna chahenge?"
+                    } else {
+                        "Sir, ${next.appLabel} se ek naya message aaya hai ${next.title} ki " +
+                            "taraf se — kya aap sunna chahenge?"
+                    }
                     announceAndListen(announcement, injectIntoHistory = true)
                 }
             }

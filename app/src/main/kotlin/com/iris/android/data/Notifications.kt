@@ -17,7 +17,11 @@ data class CapturedNotification(
     val text: String,
     val postedAt: Long,
     val hasReplyAction: Boolean,
-    val spoken: Boolean = false
+    val spoken: Boolean = false,
+    // Distinguishes an incoming call notification (WhatsApp voice/video call, marked by Android's
+    // own CATEGORY_CALL) from a regular message notification — without this, a WhatsApp call was
+    // being announced with the generic "X sent a message" text instead of "X is calling."
+    val isCallCategory: Boolean = false
 )
 
 @Dao

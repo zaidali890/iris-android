@@ -152,6 +152,21 @@ object ToolDefs {
             dangerous = true
         ),
         ToolDef(
+            "accept_whatsapp_call",
+            "Accept a currently ringing incoming WhatsApp voice/video call. Best-effort screen " +
+                "automation (taps WhatsApp's own Accept button) — requires the Accessibility " +
+                "automation permission to be enabled.",
+            emptyMap()
+        ),
+        ToolDef(
+            "decline_whatsapp_call",
+            "Decline a currently ringing incoming WhatsApp voice/video call. Best-effort screen " +
+                "automation (taps WhatsApp's own Decline button) — requires the Accessibility " +
+                "automation permission to be enabled.",
+            emptyMap(),
+            dangerous = true
+        ),
+        ToolDef(
             "get_device_status",
             "Get battery level, network connection type, and ringer mode.",
             emptyMap()

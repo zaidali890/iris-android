@@ -66,6 +66,8 @@ class ToolExecutorImpl(
             "call_contact" -> callContact(args["contact"].toString())
             "accept_call" -> acceptCall()
             "reject_call" -> rejectCall()
+            "accept_whatsapp_call" -> acceptWhatsAppCall()
+            "decline_whatsapp_call" -> declineWhatsAppCall()
             "get_device_status" -> getDeviceStatus()
             else -> throw IllegalArgumentException("Unknown tool: $name")
         }
@@ -328,6 +330,22 @@ class ToolExecutorImpl(
             "Couldn't reject the call automatically — Android is blocking that on this device/version. " +
                 "Please decline it manually this time."
         }
+    }
+
+    private suspend fun acceptWhatsAppCall(): String {
+        if (!IrisAccessibilityService.isEnabled()) {
+            return "Accessibility automation isn't enabled, so I can't tap Accept — please answer it manually."
+        }
+        val done = IrisAccessibilityService.instance?.tapWhatsAppCallButton(accept = true) ?: false
+        return if (done) "Accepted the WhatsApp call." else "Couldn't find the Accept button — please answer it manually."
+    }
+
+    private suspend fun declineWhatsAppCall(): String {
+        if (!IrisAccessibilityService.isEnabled()) {
+            return "Accessibility automation isn't enabled, so I can't tap Decline — please decline it manually."
+        }
+        val done = IrisAccessibilityService.instance?.tapWhatsAppCallButton(accept = false) ?: false
+        return if (done) "Declined the WhatsApp call." else "Couldn't find the Decline button — please decline it manually."
     }
 
     // -----------------------------------------------------------------

@@ -66,6 +66,26 @@ class IrisAccessibilityService : AccessibilityService() {
         return false
     }
 
+    /** Taps WhatsApp's own Accept/Answer or Decline/Reject button on their incoming-call screen.
+     * Best-effort, same category of automation as tapWhatsAppSend — depends on WhatsApp's current
+     * button labels, which could change in a future WhatsApp update. */
+    suspend fun tapWhatsAppCallButton(accept: Boolean): Boolean {
+        val candidates = if (accept) {
+            listOf("Accept", "Answer", "Answer call")
+        } else {
+            listOf("Decline", "Reject", "Decline call", "End call")
+        }
+        repeat(15) {
+            val node = findClickableNode(candidates)
+            if (node != null) {
+                val result = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                if (result) return true
+            }
+            delay(300)
+        }
+        return false
+    }
+
     companion object {
         var instance: IrisAccessibilityService? = null
         fun isEnabled(): Boolean = instance != null

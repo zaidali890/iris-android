@@ -45,6 +45,11 @@ class IrisNotificationListenerService : NotificationListenerService() {
             sbn.packageName
         }
 
+        // Android's own recommended way for apps to mark an incoming-call notification — WhatsApp
+        // sets this on their call notifications. Without checking this, a WhatsApp call was being
+        // announced with the generic "X sent a message" text instead of a proper call announcement.
+        val isCall = notification.category == Notification.CATEGORY_CALL
+
         var hasReply = false
         notification.actions?.forEach { action ->
             val remoteInputs = action.remoteInputs
@@ -67,7 +72,8 @@ class IrisNotificationListenerService : NotificationListenerService() {
                     title = title,
                     text = text,
                     postedAt = sbn.postTime,
-                    hasReplyAction = hasReply
+                    hasReplyAction = hasReply,
+                    isCallCategory = isCall
                 )
             )
         }
