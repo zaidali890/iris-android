@@ -2,6 +2,7 @@ package com.iris.android.services
 
 import android.app.Service
 import android.content.Intent
+import android.media.AudioManager
 import android.media.MediaPlayer
 import android.os.Binder
 import android.os.Build
@@ -536,6 +537,37 @@ class IrisForegroundService : Service(), PermissionBroker {
     // -----------------------------------------------------------------
     // Call auto-answer (real API: ANSWER_PHONE_CALLS + TelecomManager)
     // -----------------------------------------------------------------
+    // -----------------------------------------------------------------
+    // Ringtone attenuation during call announcement — the ringtone at full volume was drowning
+    // out Leeza's voice AND the user's spoken "accept"/"decline" answer.
+    // -----------------------------------------------------------------
+    private var savedRingerVolume: Int? = null
+
+    private fun attenuateRingtoneVolume() {
+        if (savedRingerVolume != null) return // already attenuated, don't overwrite the saved value
+        try {
+            val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
+            savedRingerVolume = audioManager.getStreamVolume(AudioManager.STREAM_RING)
+            val quietLevel = (audioManager.getStreamMaxVolume(AudioManager.STREAM_RING) * 0.15).toInt().coerceAtLeast(1)
+            audioManager.setStreamVolume(AudioManager.STREAM_RING, quietLevel, 0)
+        } catch (e: Exception) {
+            // Some devices restrict changing STREAM_RING without Notification Policy Access —
+            // if so, this just quietly does nothing rather than crashing the call flow.
+        }
+    }
+
+    private fun restoreRingtoneVolume() {
+        val original = savedRingerVolume ?: return
+        try {
+            val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
+            audioManager.setStreamVolume(AudioManager.STREAM_RING, original, 0)
+        } catch (e: Exception) {
+            // ignore
+        } finally {
+            savedRingerVolume = null
+        }
+    }
+
     private fun maybeRegisterCallAutoAnswer() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return // TelephonyCallback needs API 31+
         val telephonyManager = getSystemService(TELEPHONY_SERVICE) as TelephonyManager
@@ -544,7 +576,10 @@ class IrisForegroundService : Service(), PermissionBroker {
                 mainExecutor,
                 object : TelephonyCallback(), TelephonyCallback.CallStateListener {
                     override fun onCallStateChanged(state: Int) {
-                        if (state != TelephonyManager.CALL_STATE_RINGING) return
+                        if (state != TelephonyManager.CALL_STATE_RINGING) {
+                            restoreRingtoneVolume() // covers accept/decline/caller-hangup/timeout
+                            return
+                        }
                         if (currentSettings.autoAnswerCalls) {
                             scope.launch {
                                 delay(1200) // let the ringing screen settle before answering
@@ -556,6 +591,7 @@ class IrisForegroundService : Service(), PermissionBroker {
                                 }
                             }
                         } else if (currentSettings.announceIncomingCalls) {
+                            attenuateRingtoneVolume()
                             scope.launch {
                                 delay(800) // give CallScreeningService a moment to have already populated caller info
                                 val caller = IrisCallScreeningService.lastIncomingCall
@@ -617,6 +653,7 @@ class IrisForegroundService : Service(), PermissionBroker {
     }
 
     override fun onDestroy() {
+        restoreRingtoneVolume()
         wakeWordEngine?.stop()
         speechRecognizer?.destroy()
         mediaPlayer?.release()

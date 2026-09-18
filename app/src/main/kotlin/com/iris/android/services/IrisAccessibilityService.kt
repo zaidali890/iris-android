@@ -23,14 +23,21 @@ class IrisAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {}
 
-    /** Searches the current window for a clickable node matching any of the given texts/descriptions. */
+    /** Searches ALL currently visible windows for a clickable node matching any of the given
+     * texts/descriptions — not just rootInActiveWindow (the single "active" window), which misses
+     * overlay windows entirely. Incoming call screens (both the system dialer and WhatsApp's call
+     * UI) commonly render as a separate overlay window drawn on top of everything else, including
+     * the lock screen — that's why Accept/Decline couldn't be found before. */
     private fun findClickableNode(candidates: List<String>): AccessibilityNodeInfo? {
-        val root = rootInActiveWindow ?: return null
-        for (candidate in candidates) {
-            val byText = root.findAccessibilityNodeInfosByText(candidate)
-            for (node in byText) {
-                val clickable = findClickableAncestorOrSelf(node)
-                if (clickable != null) return clickable
+        val roots = windows?.mapNotNull { it.root } ?: emptyList()
+        val allRoots = if (roots.isNotEmpty()) roots else listOfNotNull(rootInActiveWindow)
+        for (root in allRoots) {
+            for (candidate in candidates) {
+                val byText = root.findAccessibilityNodeInfosByText(candidate)
+                for (node in byText) {
+                    val clickable = findClickableAncestorOrSelf(node)
+                    if (clickable != null) return clickable
+                }
             }
         }
         return null
